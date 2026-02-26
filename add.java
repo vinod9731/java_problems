@@ -1,4 +1,6 @@
-try {
+static async calculateUBOs(companyId, caseId) {
+  const session = driver.session();
+  try {
     const result = await session.run(
       `
       MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(targetCompany:Company {companyId: $companyId})
@@ -20,3 +22,25 @@ try {
       `,
       { companyId, caseId }
     );
+
+    return result.records.map(r => r.get('ubo'));
+
+  } catch (error) {
+    console.error("Error calculating UBOs:", error);
+    return [];
+  } finally {
+    await session.close();
+  }
+}
+
+
+MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(company:Company)
+MATCH (p:Person)-[r:IS_UBO_OF]->(company)
+RETURN {
+  personId: p.personId,
+  personName: p.fullName,
+  companyId: company.companyId,
+  companyName: company.name,
+  effectivePct: r.effectivePct,
+  pathsCount: r.pathsCount
+} AS ubo
