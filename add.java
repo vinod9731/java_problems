@@ -1,158 +1,279 @@
-const UBOModel = require('../models/ubo.model');
+const { initProducer } = require('../config/kafka');
+const { driver } = require('../config/neo4j');
 
-const getUBOFindings = async (req, res) => {
+let producer;
+
+async function initializeProducer() {
+  if (!producer) {
+    producer = await initProducer();
+  }
+  return producer;
+}
+
+const submitOwnership = async (req, res) => {
   try {
-    const caseId = req.params.caseId;
+    const { caseId } = req.params;
+    const { owners } = req.body;
 
-    const result = await UBOModel.getUBOFindings(caseId);
-
-    if (!result || !result.ubos || result.ubos.length === 0) {
-      return res.status(404).json({
-        message: `No UBO findings found for case ${caseId}`
+    if (!caseId || !owners || !Array.isArray(owners)) {
+      return res.status(400).json({
+        error: 'Case ID and owners array are required'
       });
     }
 
-    return res.status(200).json(result);
-
-  } catch (error) {
-    console.error('Error fetching UBO findings:', error);
-    return res.status(500).json({
-      error: error.message
-    });
-  }
-};
-
-module.exports = {
-  getUBOFindings
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const { driver } = require('../config/neo4j');
-
-class UBOModel {
-
-  /**
-   * Calculate UBOs for a company
-   */
-  static async calculateUBOs(companyId, caseId) {
     const session = driver.session();
 
     try {
-      const result = await session.run(
+      // Create case
+      await session.run(
         `
-        MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(targetCompany:Company {companyId: $companyId})
-        MATCH path = (p:Person)-[owns:OWNS*1..5]->(targetCompany)
-        WITH p, targetCompany,
-             reduce(total=1.0, r IN relationships(path) | total * r.pct) AS pathPct
-        WITH p, targetCompany,
-             sum(pathPct) AS totalPct,
-             count(path) AS pathsCount
-        WHERE totalPct > 25
-        RETURN {
-          personId: p.personId,
-          personName: p.fullName,
-          companyId: targetCompany.companyId,
-          companyName: targetCompany.name,
-          effectivePct: totalPct,
-          pathsCount: pathsCount
-        } AS ubo
-        `,
-        { companyId, caseId }
-      );
-
-      return result.records.map(record => record.get('ubo'));
-
-    } catch (error) {
-      console.error("Error calculating UBOs:", error);
-      return [];
-    } finally {
-      await session.close();
-    }
-  }
-
-  /**
-   * Get UBO findings for a case
-   */
-  static async getUBOFindings(caseId) {
-    const session = driver.session();
-
-    try {
-      const result = await session.run(
-        `
-        MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(company:Company)
-        MATCH (p:Person)-[r:IS_UBO_OF]->(company)
-        RETURN {
-          personId: p.personId,
-          personName: p.fullName,
-          companyId: company.companyId,
-          companyName: company.name,
-          effectivePct: r.effectivePct,
-          pathsCount: r.pathsCount
-        } AS ubo
+        MERGE (c:KybCase {id: $caseId})
+        ON CREATE SET c.createdAt = datetime()
         `,
         { caseId }
       );
 
-      return {
-        caseId,
-        ubos: result.records.map(record => record.get('ubo'))
-      };
+      // Create nodes
+      for (const owner of owners) {
+        if (owner.type === 'Company') {
+          await session.run(
+            `
+            MERGE (c:Company {id: $id})
+            ON CREATE SET c.name = $name,
+                          c.jurisdiction = $jurisdiction
+            `,
+            {
+              id: owner.id,
+              name: owner.name,
+              jurisdiction: owner.jurisdiction
+            }
+          );
 
-    } catch (error) {
-      console.error("Error getting UBO findings:", error);
-      return null;
-    } finally {
-      await session.close();
-    }
-  }
-
-  /**
-   * Save UBO findings to Neo4j
-   */
-  static async saveUBOFindings(caseId, ubos) {
-    const session = driver.session();
-
-    try {
-      for (const ubo of ubos) {
-        await session.run(
-          `
-          MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(company:Company {companyId: $companyId})
-          MATCH (p:Person {personId: $personId})
-          MERGE (p)-[r:IS_UBO_OF]->(company)
-          SET r.effectivePct = $effectivePct,
-              r.pathsCount = $pathsCount,
-              r.lastUpdated = datetime()
-          `,
-          {
-            caseId,
-            companyId: ubo.companyId,
-            personId: ubo.personId,
-            effectivePct: ubo.effectivePct,
-            pathsCount: ubo.pathsCount
-          }
-        );
+          // Link company to case
+          await session.run(
+            `
+            MATCH (k:KybCase {id: $caseId})
+            MATCH (c:Company {id: $companyId})
+            MERGE (k)-[:LINKED_TO]->(c)
+            `,
+            { caseId, companyId: owner.id }
+          );
+        } else {
+          await session.run(
+            `
+            MERGE (p:Person {id: $id})
+            ON CREATE SET p.name = $name
+            `,
+            {
+              id: owner.id,
+              name: owner.name
+            }
+          );
+        }
       }
 
-    } catch (error) {
-      console.error("Error saving UBO findings:", error);
+      // Create OWNS relationships (IMPORTANT FIX)
+      for (const owner of owners) {
+        if (owner.targetId && owner.ownershipPercentage) {
+          await session.run(
+            `
+            MATCH (source {id: $sourceId})
+            MATCH (target:Company {id: $targetId})
+            MERGE (source)-[r:OWNS]->(target)
+            SET r.percentage = $percentage,
+                r.validFrom = datetime()
+            `,
+            {
+              sourceId: owner.id,
+              targetId: owner.targetId,
+              percentage: owner.ownershipPercentage
+            }
+          );
+        }
+      }
+
     } finally {
       await session.close();
     }
+
+    const kafkaProducer = await initializeProducer();
+
+    await kafkaProducer.send({
+      topic: 'kyb.ownership.submitted',
+      messages: [{
+        value: JSON.stringify({
+          caseId,
+          owners,
+          timestamp: new Date().toISOString()
+        })
+      }]
+    });
+
+    res.status(202).json({
+      message: 'Ownership submission initiated',
+      caseId,
+      status: 'ACCEPTED'
+    });
+
+  } catch (error) {
+    console.error('Error submitting ownership:', error);
+    res.status(500).json({
+      error: 'Failed to submit ownership',
+      details: error.message
+    });
   }
+};
+
+module.exports = { submitOwnership };
+
+
+
+
+
+
+
+
+
+
+const neo4j = require('neo4j-driver');
+
+const driver = neo4j.driver(
+  process.env.NEO4J_URI || 'bolt://neo4j:7687',
+  neo4j.auth.basic(
+    process.env.NEO4J_USER || 'neo4j',
+    process.env.NEO4J_PASSWORD || 'password'
+  )
+);
+
+const runUBOQuery = async (caseId) => {
+  const session = driver.session();
+
+  try {
+    const query = `
+      MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(root:Company)
+
+      MATCH path = (person:Person)-[rels:OWNS*1..5]->(root)
+
+      WITH person,
+           reduce(pct = 1.0, r IN rels | pct * (r.percentage / 100.0)) AS effectivePct
+
+      WHERE effectivePct >= 0.25
+
+      RETURN person, effectivePct
+    `;
+
+    return await session.run(query, { caseId });
+
+  } finally {
+    await session.close();
+  }
+};
+
+module.exports = { driver, runUBOQuery };
+
+
+
+
+
+
+
+
+
+
+const { driver, runUBOQuery } = require('../config/neo4j');
+
+const processUBODiscovery = async (caseId) => {
+  const result = await runUBOQuery(caseId);
+
+  const session = driver.session();
+
+  try {
+    const ubos = [];
+
+    for (const record of result.records) {
+      const person = record.get('person');
+      const effectivePct = record.get('effectivePct');
+
+      await session.run(
+        `
+        MATCH (p:Person {id: $personId})
+        MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(company:Company)
+        MERGE (p)-[r:IS_UBO_OF]->(company)
+        SET r.effectivePct = $effectivePct
+        `,
+        {
+          personId: person.properties.id,
+          caseId,
+          effectivePct
+        }
+      );
+
+      ubos.push({
+        personId: person.properties.id,
+        name: person.properties.name,
+        effectivePct
+      });
+    }
+
+    return {
+      caseId,
+      ubos,
+      timestamp: new Date().toISOString()
+    };
+
+  } finally {
+    await session.close();
+  }
+};
+
+module.exports = { processUBODiscovery };
+
+
+
+
+
+
+
+
+const { consumer, producer } = require('../config/kafka');
+const { processUBODiscovery } = require('./ubo.service');
+
+async function startUBOProcessor() {
+
+  await consumer.connect();
+  await producer.connect();
+
+  await consumer.subscribe({
+    topic: 'kyb.ownership.submitted',
+    fromBeginning: true
+  });
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      try {
+        const payload = JSON.parse(message.value.toString());
+        const { caseId } = payload;
+
+        console.log(`Processing UBO discovery for case ${caseId}`);
+
+        const uboEvent = await processUBODiscovery(caseId);
+
+        await producer.send({
+          topic: 'kyb.ubo.discovered',
+          messages: [
+            { value: JSON.stringify(uboEvent) }
+          ]
+        });
+
+        console.log(`UBO discovery completed for case ${caseId}`);
+
+      } catch (error) {
+        console.error('UBO processor error:', error);
+      }
+    }
+  });
 }
 
-module.exports = UBOModel;
+module.exports = { startUBOProcessor };
+      
 
