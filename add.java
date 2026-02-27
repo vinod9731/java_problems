@@ -335,3 +335,47 @@ const verifyOwnership = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+
+
+
+const { driver } = require('../config/neo4j');
+
+const getUBOs = async (req, res) => {
+  const { caseId } = req.params;
+  const session = driver.session();
+
+  try {
+    const result = await session.run(
+      `
+      MATCH (c:KybCase {id: $caseId})-[:LINKED_TO]->(company:Company)
+      MATCH path = (person:Person)-[rels:OWNS*1..5]->(company)
+      WITH person, company,
+           reduce(pct = 1.0, r IN rels | pct * (r.percentage / 100.0)) AS effectivePct
+      WHERE effectivePct >= 0.25
+      RETURN person {.*, effectiveOwnership: effectivePct * 100 } AS ubo
+      `,
+      { caseId }
+    );
+
+    const ubos = result.records.map(r => r.get('ubo'));
+
+    res.status(200).json({
+      caseId,
+      ubos
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    await session.close();
+  }
+};
+
+module.exports = { getUBOs };
+
