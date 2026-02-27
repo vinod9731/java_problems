@@ -277,3 +277,61 @@ async function startUBOProcessor() {
 module.exports = { startUBOProcessor };
       
 
+
+
+
+
+
+
+
+const verifyOwnership = async (req, res) => {
+  try {
+    const { caseId } = req.params;
+    const session = driver.session();
+
+    try {
+      const result = await session.run(
+        `
+        MATCH (k:KybCase {id: $caseId})
+        OPTIONAL MATCH (k)-[:LINKED_TO]->(company:Company)
+        OPTIONAL MATCH (company)<-[r:OWNS]-(owner)
+        RETURN {
+          case: properties(k),
+          companies: collect(DISTINCT properties(company)),
+          owners: collect(DISTINCT {
+            owner: properties(owner),
+            relationship: properties(r)
+          })
+        } AS graph
+        `,
+        { caseId }
+      );
+
+      const graph =
+        result.records.length > 0
+          ? result.records[0].get('graph')
+          : null;
+
+      if (!graph) {
+        return res.status(404).json({
+          success: false,
+          message: `No ownership data found for case ${caseId}`
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        caseId,
+        graph
+      });
+    } finally {
+      await session.close();
+    }
+  } catch (error) {
+    console.error('Error verifying ownership:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
