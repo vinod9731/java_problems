@@ -379,3 +379,67 @@ const getUBOs = async (req, res) => {
 
 module.exports = { getUBOs };
 
+
+
+
+
+
+const { consumer, producer } = require('../config/kafka');
+const { runUBOQuery } = require('../config/neo4j');
+
+async function startUBOProcessor() {
+
+  await consumer.connect();
+  await producer.connect();
+
+  await consumer.subscribe({
+    topic: 'kyb.ownership.submitted',
+    fromBeginning: true
+  });
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      try {
+        const payload = JSON.parse(message.value.toString());
+        const { caseId } = payload;
+
+        console.log(`Running UBO discovery for case ${caseId}`);
+
+        const result = await runUBOQuery(caseId);
+
+        const ubos = result.records.map(record => {
+          const person = record.get('person');
+          const effectivePct = record.get('effectivePct');
+
+          return {
+            personId: person.properties.id,
+            name: person.properties.name,
+            effectiveOwnership: effectivePct * 100
+          };
+        });
+
+        // 🔥 Emit derived event
+        await producer.send({
+          topic: 'kyb.ubo.discovered',
+          messages: [
+            {
+              value: JSON.stringify({
+                caseId,
+                ubos,
+                timestamp: new Date().toISOString()
+              })
+            }
+          ]
+        });
+
+        console.log(`UBO discovery event emitted for case ${caseId}`);
+
+      } catch (error) {
+        console.error('UBO processor error:', error);
+      }
+    }
+  });
+}
+
+module.exports = { startUBOProcessor };
+
