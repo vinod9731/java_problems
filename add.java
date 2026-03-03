@@ -1,9 +1,19 @@
-"neo4j.topic.cypher.kyb.screening.completed": "WITH $value AS event MATCH (p:Person {id:event.personId}) MERGE (c:Check {id:event.checkId}) SET c.type='SCREENING', c.status=event.status, c.details=event.details MERGE (p)-[:HAS_CHECK]->(c)"
+{
+  "name": "neo4j-sink-kyb",
+  "config": {
+    "connector.class": "org.neo4j.connectors.kafka.sink.Neo4jConnector",
+    "tasks.max": "1",
+    "topics": "kyb.screening.completed",
 
+    "neo4j.uri": "bolt://neo4j:7687",
+    "neo4j.authentication.basic.username": "neo4j",
+    "neo4j.authentication.basic.password": "yourpassword",
+    "neo4j.database": "neo4j",
 
-  "neo4j.topic.cypher.kyb.risk.scored": "WITH $value AS event MATCH (k:KybCase {id:event.caseId}) MERGE (r:Risk {caseId:event.caseId}) SET r.score=event.score, r.factors=event.factors MERGE (k)-[:HAS_RISK]->(r)"
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
 
-
-  "neo4j.topic.cypher.kyb.screening.completed": "CREATE (:DebugTest {test:'working'})"
-
-  MATCH (d:DebugTest) RETURN d;
+    "neo4j.cypher.topic.kyb.screening.completed": "CREATE (:DebugTest {value:'working'})"
+  }
+}
