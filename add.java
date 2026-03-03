@@ -10,3 +10,5 @@ RETURN p.name, c.status, c.details;
 
   MATCH (k:KybCase)-[:HAS_RISK]->(r:Risk)
 RETURN k.id, r.score, r.factors;
+
+"neo4j.cypher.topic.kyb.screening.completed": "WITH $event AS event UNWIND event.screeningResults AS result MATCH (p:Person {id: result.personId}) MERGE (c:Check {id: event.caseId + '-' + result.personId}) SET c.type='SCREENING', c.status = CASE WHEN result.hit THEN 'HIT' ELSE 'CLEAR' END, c.details = result.name MERGE (p)-[:HAS_CHECK]->(c)"
