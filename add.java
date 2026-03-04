@@ -110,3 +110,39 @@ AND (
       OR pos.AML_EXCL_CODE IS NULL
 );
 
+
+scenario 1. 
+       before 
+       
+SELECT COUNT(*) AS unmatched_payments
+FROM payment.default.payment_init p
+LEFT JOIN payment.default.posting_init pos
+ON ltrim(p.PAY_OPE_NUM,'0') =
+   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
+AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
+AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
+
+WHERE pos.POS_ID IS NULL;
+
+scenario 1 after 
+
+       ³
+SELECT COUNT(*) AS unmatched_after
+FROM payment.default.payment_after p
+LEFT JOIN payment.default.posting_after pos
+ON ltrim(p.PAY_OPE_NUM,'0') =
+   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
+AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
+AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
+
+WHERE pos.POS_ID IS NULL;
+
+SELECT COUNT(*)
+FROM payment.default.payment_init
+WHERE PAY_INTRBKSTTLMAMT > 10000;
