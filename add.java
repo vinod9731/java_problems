@@ -1,211 +1,118 @@
-SELECT COUNT(*) AS unmatched_payments
-FROM payment.default.payment_init p
-LEFT JOIN payment.default.posting_init pos
-ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE pos.POS_ID IS NULL;
+Calculate Daily Transaction Volume
 
-
-
-SELECT p.PAY_ID,
-       p.PAY_OPE_NUM,
-       p.PAY_ACCOUNT_KEY
-FROM payment.default.payment_init p
-LEFT JOIN payment.default.posting_init pos
-ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE pos.POS_ID IS NULL
-LIMIT 20;
-
-
-SELECT COUNT(*) AS unmatched_after
-FROM payment.default.payment_after p
-LEFT JOIN payment.default.posting_after pos
-ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE pos.POS_ID IS NULL;
-
-
-
-SELECT p.PAY_ID,
-       p.PAY_INTRBKSTTLMAMT,
-       pos.AML_SCOPE,
-       pos.AML_EXCL_CODE
-FROM payment.default.payment_after p
-JOIN payment.default.posting_after pos
-ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (pos.AML_SCOPE IS NULL OR pos.AML_EXCL_CODE IS NULL);
-
-
-SELECT COUNT(*) FROM payment.default.payment_init;
-SELECT COUNT(*) FROM payment.default.posting_init;
-
-SELECT COUNT(*) FROM payment.default.payment_after;
-SELECT COUNT(*) FROM payment.default.posting_after;
-
-
-
-SELECT COUNT(*) AS unmatched_payments
-FROM payment.default.payment_init p
-LEFT JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE pos.POS_ID IS NULL;
-
-SELECT COUNT(*) AS unmatched_after
-FROM payment.default.payment_after p
-LEFT JOIN payment.default.posting_after pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-WHERE pos.POS_ID IS NULL;
-
-scre2
-
-SELECT 
-    p.PAY_ID,
-    p.PAY_INTRBKSTTLMAMT,
-    pos.AML_SCOPE,
-    pos.AML_EXCL_CODE
-FROM payment.default.payment_init p
-JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
-
-SELECT COUNT(*) AS kyc_missing_transactions
-FROM payment.default.payment_init p
-JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
-
-
-
-SELECT COUNT(*) AS kyc_missing_after
-FROM payment.default.payment_after p
-JOIN payment.default.posting_after pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
-
-
-scenario 1. 
-       before 
-       
-SELECT COUNT(*) AS unmatched_payments
-FROM payment.default.payment_init p
-LEFT JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
-AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
-AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
-
-WHERE pos.POS_ID IS NULL;
-
-scenario 1 after 
-
-       ³
-SELECT COUNT(*) AS unmatched_after
-FROM payment.default.payment_after p
-LEFT JOIN payment.default.posting_after pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
-AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
-AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
-
-WHERE pos.POS_ID IS NULL;
-
-SELECT COUNT(*)
+SELECT
+    PAY_TRANS_DT,
+    COUNT(*) AS transaction_volume
 FROM payment.default.payment_init
-WHERE PAY_INTRBKSTTLMAMT > 10000;
+GROUP BY PAY_TRANS_DT
+ORDER BY PAY_TRANS_DT;
+
+
+Compute Average Transaction Volume
+
+
+SELECT
+    AVG(daily_count) AS avg_transactions
+FROM (
+    SELECT
+        PAY_TRANS_DT,
+        COUNT(*) AS daily_count
+    FROM payment.default.payment_init
+    GROUP BY PAY_TRANS_DT
+) t;
+
+
+Detect Volume Spikes
+
+WITH daily_volume AS (
+    SELECT
+        PAY_TRANS_DT,
+        COUNT(*) AS volume
+    FROM payment.default.payment_init
+    GROUP BY PAY_TRANS_DT
+),
+avg_volume AS (
+    SELECT AVG(volume) AS avg_vol
+    FROM daily_volume
+)
+
+SELECT
+    d.PAY_TRANS_DT,
+    d.volume
+FROM daily_volume d
+CROSS JOIN avg_volume a
+WHERE d.volume > (a.avg_vol * 2)
+ORDER BY d.PAY_TRANS_DT;
 
 
 
-scenario 2
-
-SELECT 
-    p.PAY_ID,
-    p.PAY_INTRBKSTTLMAMT,
-    pos.AML_SCOPE,
-    pos.AML_EXCL_CODE
-FROM payment.default.payment_init p
-JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
-
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
-AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
-AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
-
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
+Detect Sudden Transaction Surges
 
 
-SELECT COUNT(*) AS kyc_missing_transactions
-FROM payment.default.payment_init p
-JOIN payment.default.posting_init pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+SELECT
+    PAY_TRANS_DT,
+    COUNT(*) AS transaction_volume,
+    LAG(COUNT(*)) OVER (ORDER BY PAY_TRANS_DT) AS previous_day_volume
+FROM payment.default.payment_init
+GROUP BY PAY_TRANS_DT
+ORDER BY PAY_TRANS_DT;
 
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
-AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
-AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
 
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
+now detect the surgs
+
+WITH daily_volume AS (
+    SELECT
+        PAY_TRANS_DT,
+        COUNT(*) AS volume
+    FROM payment.default.payment_init
+    GROUP BY PAY_TRANS_DT
+)
+
+SELECT
+    PAY_TRANS_DT,
+    volume,
+    LAG(volume) OVER (ORDER BY PAY_TRANS_DT) AS prev_volume
+FROM daily_volume
+WHERE volume > 1.5 * LAG(volume) OVER (ORDER BY PAY_TRANS_DT);
 
 
 
-SELECT COUNT(*) AS kyc_missing_after
-FROM payment.default.payment_after p
-JOIN payment.default.posting_after pos
-ON ltrim(p.PAY_OPE_NUM,'0') =
-   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+Predict Future Transaction Volume
 
-AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
-AND p.PAY_TRANS_DT = pos.POS_DATE_DECLA_BATCH_INPUT
-AND p.PAY_SERVICE_CD = pos.POS_DEPARTMENT_CODE
-AND p.PAY_BULK_NUM = pos.POS_BATCH_NB
 
-WHERE p.PAY_INTRBKSTTLMAMT > 10000
-AND (
-      pos.AML_SCOPE IS NULL
-      OR pos.AML_EXCL_CODE IS NULL
-);
+SELECT
+    PAY_TRANS_DT,
+    COUNT(*) AS volume,
+    AVG(COUNT(*)) OVER (
+        ORDER BY PAY_TRANS_DT
+        ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+    ) AS moving_avg_prediction
+FROM payment.default.payment_init
+GROUP BY PAY_TRANS_DT
+ORDER BY PAY_TRANS_DT;
 
+aml alert notification 
+
+WITH daily_volume AS (
+    SELECT
+        PAY_TRANS_DT,
+        COUNT(*) AS volume
+    FROM payment.default.payment_init
+    GROUP BY PAY_TRANS_DT
+),
+avg_volume AS (
+    SELECT AVG(volume) AS avg_vol
+    FROM daily_volume
+)
+
+SELECT
+    d.PAY_TRANS_DT,
+    d.volume,
+    CASE
+        WHEN d.volume > a.avg_vol * 2 THEN 'ALERT_SPIKE'
+        WHEN d.volume > a.avg_vol * 1.5 THEN 'HIGH_VOLUME'
+        ELSE 'NORMAL'
+    END AS aml_alert
+FROM daily_volume d
+CROSS JOIN avg_volume a
+ORDER BY d.PAY_TRANS_DT;
