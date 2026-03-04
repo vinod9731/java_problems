@@ -6,3 +6,4 @@ Yes, the project is both interesting and a good learning experience. Some of the
 
 
   
+As of now, everything is going well and I am able to progress with the tasks. If I face any issues or need clarification at any point, I will reach out for guidance.
