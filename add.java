@@ -1,9 +1,31 @@
-Yes, the project is both interesting and a good learning experience. Some of the frameworks and technologies used in the project are new to me, but it is exciting and interesting to learn and implement them.
+Starburst (Trino) POC – Payment to Posting Linkage for AML Monitoring
+  Objective: Validate federated querying across payment and ledger systems without ETL.
+Goal: Identify unmatched transactions and detect AML compliance issues.
+Enable analytics on distributed data sources using Starburst/Trino.
+Technologies Used: Starburst (Trino), Hive Metastore, PostgreSQL, MinIO, Docker, Parquet.
 
 
 
-  I have been continuously upskilling since joining BNP by learning new frameworks, tools, and technologies used in the project. I am focusing on understanding how these tools work and where they can be applied effectively within the project implementation.
+  Core Technologies and Components
+Starburst / Trino: Distributed SQL query engine enabling federated analytics.
+Coordinator: Accepts queries and distributes tasks across workers.
+Workers: Execute distributed query processing.
+Hive Metastore: Stores metadata for data lake tables.
+PostgreSQL: Simulated ledger database.
+MinIO: Object storage containing payment datasets.
+Parquet: Columnar storage optimized for analytics.
 
 
-  
-As of now, everything is going well and I am able to progress with the tasks. If I face any issues or need clarification at any point, I will reach out for guidance.
+  System Architecture and Data Flow
+Payment transaction files stored in MinIO as Parquet format.
+Hive Metastore registers tables and metadata.
+PostgreSQL stores ledger posting records.
+Starburst queries both sources simultaneously.
+Results used for AML monitoring and reconciliation.
+
+
+  AML Monitoring Scenarios
+Scenario 1: Identify payments initiated but not posted in ledger.
+Scenario 2: Detect high-value transactions (> $10,000) without AML/KYC validation.
+Queries executed using Starburst SQL across federated data sources.
+Demonstrates reconciliation monitoring and AML compliance validation.
