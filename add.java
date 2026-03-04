@@ -1,14 +1,46 @@
-"neo4j.cypher.topic.kyb.screening.completed": "WITH $event AS event MATCH (p:Person {id:event.personId}) MERGE (c:Check {id:event.checkId}) SET c.type='SCREENING', c.status=event.status, c.details=event.details MERGE (p)-[:HAS_CHECK]->(c)"
+SELECT COUNT(*) AS unmatched_payments
+FROM payment.default.payment_init p
+LEFT JOIN payment.default.posting_init pos
+ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE pos.POS_ID IS NULL;
 
 
 
-  MATCH (p:Person)-[:HAS_CHECK]->(c:Check)
-RETURN p.name, c.status, c.details;
+SELECT p.PAY_ID,
+       p.PAY_OPE_NUM,
+       p.PAY_ACCOUNT_KEY
+FROM payment.default.payment_init p
+LEFT JOIN payment.default.posting_init pos
+ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE pos.POS_ID IS NULL
+LIMIT 20;
 
 
-"neo4j.cypher.topic.kyb.risk.scored": "WITH $event AS event MATCH (k:KybCase {id:event.caseId}) MERGE (r:Risk {caseId:event.caseId}) SET r.score=event.score, r.factors=event.factors MERGE (k)-[:HAS_RISK]->(r)"
+SELECT COUNT(*) AS unmatched_after
+FROM payment.default.payment_after p
+LEFT JOIN payment.default.posting_after pos
+ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE pos.POS_ID IS NULL;
 
-  MATCH (k:KybCase)-[:HAS_RISK]->(r:Risk)
-RETURN k.id, r.score, r.factors;
 
-"neo4j.cypher.topic.kyb.screening.completed": "WITH $event AS event UNWIND event.screeningResults AS result MATCH (p:Person {id: result.personId}) MERGE (c:Check {id: event.caseId + '-' + result.personId}) SET c.type='SCREENING', c.status = CASE WHEN result.hit THEN 'HIT' ELSE 'CLEAR' END, c.details = result.name MERGE (p)-[:HAS_CHECK]->(c)"
+
+SELECT p.PAY_ID,
+       p.PAY_INTRBKSTTLMAMT,
+       pos.AML_SCOPE,
+       pos.AML_EXCL_CODE
+FROM payment.default.payment_after p
+JOIN payment.default.posting_after pos
+ON CAST(p.PAY_OPE_NUM AS BIGINT) = pos.POS_OPERATION_NO
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE p.PAY_INTRBKSTTLMAMT > 10000
+AND (pos.AML_SCOPE IS NULL OR pos.AML_EXCL_CODE IS NULL);
+
+
+SELECT COUNT(*) FROM payment.default.payment_init;
+SELECT COUNT(*) FROM payment.default.posting_init;
+
+SELECT COUNT(*) FROM payment.default.payment_after;
+SELECT COUNT(*) FROM payment.default.posting_after;
