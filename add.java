@@ -44,3 +44,21 @@ SELECT COUNT(*) FROM payment.default.posting_init;
 
 SELECT COUNT(*) FROM payment.default.payment_after;
 SELECT COUNT(*) FROM payment.default.posting_after;
+
+
+
+SELECT COUNT(*) AS unmatched_payments
+FROM payment.default.payment_init p
+LEFT JOIN payment.default.posting_init pos
+ON ltrim(p.PAY_OPE_NUM,'0') =
+   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE pos.POS_ID IS NULL;
+
+SELECT COUNT(*) AS unmatched_after
+FROM payment.default.payment_after p
+LEFT JOIN payment.default.posting_after pos
+ON ltrim(p.PAY_OPE_NUM,'0') =
+   ltrim(CAST(pos.POS_OPERATION_NO AS VARCHAR),'0')
+AND p.PAY_ACCOUNT_KEY = pos.POS_ACCOUNT_KEY
+WHERE pos.POS_ID IS NULL;
