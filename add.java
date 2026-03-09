@@ -1,171 +1,84 @@
-<!DOCTYPE html>
-<html>
+const { createConsumer, producer } = require('../config/kafka');
 
-<head>
-<meta charset="UTF-8">
-<title>Starburst AML Demo</title>
-<link rel="stylesheet" href="style.css">
-</head>
+async function startRiskProcessor() {
 
-<body>
+  const consumer = createConsumer('risk-group');
 
-<header>
-<h1>Starburst / Trino AML Monitoring Console</h1>
-</header>
+  await consumer.connect();
+  await producer.connect();
 
-<div class="top-section">
+  await consumer.subscribe({
+    topic: 'kyb.screening.completed',
+    fromBeginning: true
+  });
 
-<div class="panel">
-<h2>Trino Dashboard</h2>
-<iframe src="http://localhost:8080"></iframe>
-</div>
+  await consumer.run({
+    eachMessage: async ({ message }) => {
 
-<div class="panel">
-<h2>MinIO Console</h2>
-<iframe src="http://localhost:9101"></iframe>
-</div>
+      const payload = JSON.parse(message.value.toString());
+      const { caseId, screeningResults } = payload;
 
-</div>
+      let score = 0;
+      let factors = [];
 
-<div class="terminal-section">
+      // ---------- Screening Hit Check ----------
+      screeningResults.forEach(result => {
+        if (result.hit) {
+          score += 60;
+          factors.push(`screening_hit:${result.name}`);
+        }
+      });
 
-<h2>SQL Terminal</h2>
+      // ---------- Industry Risk ----------
+      const highRiskIndustries = ['crypto', 'gambling', 'arms'];
 
-<div id="output"></div>
+      if (payload.industry && highRiskIndustries.includes(payload.industry.toLowerCase())) {
+        score += 20;
+        factors.push(`high_risk_industry:${payload.industry}`);
+      }
 
-<div class="input-area">
+      // ---------- Country Risk ----------
+      const highRiskCountries = ['iran', 'north korea', 'syria'];
 
-<span>SQL ></span>
+      if (payload.country && highRiskCountries.includes(payload.country.toLowerCase())) {
+        score += 20;
+        factors.push(`high_risk_country:${payload.country}`);
+      }
 
-<input type="text" id="queryInput" placeholder="Enter SQL query">
+      // ---------- Default Low Risk ----------
+      if (score === 0) {
+        score = 10;
+        factors.push('low_risk_case');
+      }
 
-<button onclick="runQuery()">Run</button>
+      // ---------- Emit Risk Event ----------
+      await producer.send({
+        topic: 'kyb.risk.scored',
+        messages: [
+          {
+            value: JSON.stringify({
+              caseId,
+              score,
+              factors
+            })
+          }
+        ]
+      });
 
-</div>
-
-</div>
-
-<script src="script.js"></script>
-
-</body>
-</html>
-
-
-
-
-
-
-
-  body{
-margin:0;
-font-family:Segoe UI;
-background:#f5f7fa;
+      console.log('Risk message emitted:', { caseId, score, factors });
+    }
+  });
 }
 
-header{
-background:#0b7a3b;
-color:white;
-text-align:center;
-padding:15px;
-}
-
-.top-section{
-display:flex;
-height:60vh;
-}
-
-.panel{
-flex:1;
-display:flex;
-flex-direction:column;
-border-right:2px solid #ccc;
-}
-
-.panel h2{
-margin:0;
-padding:10px;
-background:#222;
-color:white;
-}
-
-iframe{
-flex:1;
-border:none;
-}
-
-.terminal-section{
-height:40vh;
-background:black;
-color:#00ff88;
-display:flex;
-flex-direction:column;
-padding:10px;
-}
-
-.terminal-section h2{
-color:white;
-margin:0 0 10px 0;
-}
-
-#output{
-flex:1;
-overflow-y:auto;
-font-family:monospace;
-}
-
-.input-area{
-display:flex;
-border-top:1px solid #444;
-padding-top:10px;
-}
-
-input{
-flex:1;
-background:black;
-color:#00ff88;
-border:1px solid #333;
-padding:6px;
-font-family:monospace;
-}
-
-button{
-margin-left:10px;
-background:#0b7a3b;
-border:none;
-color:white;
-padding:6px 12px;
-cursor:pointer;
-}
-
-button:hover{
-background:#095e2d;
-}
+module.exports = { startRiskProcessor };
 
 
 
 
-
-function runQuery(){
-
-let query = document.getElementById("queryInput").value;
-let output = document.getElementById("output");
-
-if(query.trim() === "") return;
-
-let line = document.createElement("div");
-line.innerHTML = "<span style='color:#00ff88'>SQL ></span> " + query;
-
-output.appendChild(line);
-
-let result = document.createElement("div");
-result.innerHTML = "Executing query on Trino...";
-
-output.appendChild(result);
-
-document.getElementById("queryInput").value="";
-
-output.scrollTop = output.scrollHeight;
-
-}
+MATCH (c:KybCase)-[:HAS_RISK]->(r:Risk)
+RETURN c.id, r.score, r.factors;
 
 
+MATCH (c:KybCase)-[:HAS_RISK]->(r:Risk)
+WHERE r.score >= 70
+RETURN c.id, r.score, r.factors;
