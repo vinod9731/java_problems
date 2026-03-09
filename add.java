@@ -1,14 +1,14 @@
 const { createConsumer, producer } = require('../config/kafka');
 
-async function startRiskProcessor() {
+async function startScreeningProcessor() {
 
-  const consumer = createConsumer('risk-group');
+  const consumer = createConsumer('screening-group');
 
   await consumer.connect();
   await producer.connect();
 
   await consumer.subscribe({
-    topic: 'kyb.screening.completed',
+    topic: 'kyb.ubo.discovered',
     fromBeginning: true
   });
 
@@ -16,69 +16,36 @@ async function startRiskProcessor() {
     eachMessage: async ({ message }) => {
 
       const payload = JSON.parse(message.value.toString());
-      const { caseId, screeningResults } = payload;
 
-      let score = 0;
-      let factors = [];
+      const { caseId, ubos, industry, country } = payload;
 
-      // ---------- Screening Hit Check ----------
-      screeningResults.forEach(result => {
-        if (result.hit) {
-          score += 60;
-          factors.push(`screening_hit:${result.name}`);
-        }
-      });
+      console.log(`Screening case ${caseId}`);
 
-      // ---------- Industry Risk ----------
-      const highRiskIndustries = ['crypto', 'gambling', 'arms'];
+      const sanctionsList = ['John Doe'];
 
-      if (payload.industry && highRiskIndustries.includes(payload.industry.toLowerCase())) {
-        score += 20;
-        factors.push(`high_risk_industry:${payload.industry}`);
-      }
+      const screeningResults = ubos.map(ubo => ({
+        personId: ubo.personId,
+        name: ubo.name,
+        hit: sanctionsList.includes(ubo.name)
+      }));
 
-      // ---------- Country Risk ----------
-      const highRiskCountries = ['iran', 'north korea', 'syria'];
-
-      if (payload.country && highRiskCountries.includes(payload.country.toLowerCase())) {
-        score += 20;
-        factors.push(`high_risk_country:${payload.country}`);
-      }
-
-      // ---------- Default Low Risk ----------
-      if (score === 0) {
-        score = 10;
-        factors.push('low_risk_case');
-      }
-
-      // ---------- Emit Risk Event ----------
       await producer.send({
-        topic: 'kyb.risk.scored',
+        topic: 'kyb.screening.completed',
         messages: [
           {
             value: JSON.stringify({
               caseId,
-              score,
-              factors
+              industry,
+              country,
+              screeningResults
             })
           }
         ]
       });
 
-      console.log('Risk message emitted:', { caseId, score, factors });
+      console.log('Screening message emitted');
     }
   });
 }
 
-module.exports = { startRiskProcessor };
-
-
-
-
-MATCH (c:KybCase)-[:HAS_RISK]->(r:Risk)
-RETURN c.id, r.score, r.factors;
-
-
-MATCH (c:KybCase)-[:HAS_RISK]->(r:Risk)
-WHERE r.score >= 70
-RETURN c.id, r.score, r.factors;
+module.exports = { startScreeningProcessor };
