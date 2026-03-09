@@ -6,3 +6,7 @@
 
 
   
+
+curl -X POST -H "Content-Type: application/json" \
+--data @connect/neo4j-sink-kyb.json \
+http://localhost:8083/connectors
