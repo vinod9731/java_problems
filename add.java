@@ -1,12 +1,20 @@
-"neo4j.cypher.topic.kyb.risk.scored":
-"MATCH (c:KybCase {id:value.caseId}) MERGE (r:Risk {caseId:value.caseId}) SET r.score = value.score, r.factors = value.factors MERGE (c)-[:HAS_RISK]->(r)"
-
-
-  curl -X DELETE http://localhost:8083/connectors/neo4j-sink-kyb
-
-
-  
-
-curl -X POST -H "Content-Type: application/json" \
---data @connect/neo4j-sink-kyb.json \
-http://localhost:8083/connectors
+kafka:
+  image: docker-remote.artifactory.cib.echonet/confluentinc/cp-kafka:7.4.0
+  container_name: kyb_kafka
+  hostname: kyb_kafka
+  ports:
+    - "9092:9092"
+  environment:
+    KAFKA_NODE_ID: 1
+    KAFKA_PROCESS_ROLES: broker,controller
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kyb_kafka:9093
+    KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+    KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  networks:
+    - kafka_net
