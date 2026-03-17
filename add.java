@@ -1,155 +1,67 @@
-#!/bin/bash
-
-echo "Starting KYB Demo..."
-
-echo "----------------------------------"
-echo "Scenario 1: Clean ownership → APPROVE"
-echo "----------------------------------"
-
-# Seed ownership (clean case)
-./seed.sh
-
-# Trigger UBO pipeline
-./test-ubo-processor.sh
-
-# Officer approves
-curl -X POST http://localhost:3001/api/cases/101/decision \
--H "Content-Type: application/json" \
--d '{
-"decision":"approve",
-"decisionMaker":"officer1"
-}'
-
-sleep 3
-
-echo ""
-echo "----------------------------------"
-echo "Scenario 2: Complex ownership → ESCALATE"
-echo "----------------------------------"
-
-# Trigger complex chain case
-./seed-ownership.sh
-
-./test-ubo-processor.sh
-
-# Officer escalates
-curl -X POST http://localhost:3001/api/cases/102/decision \
--H "Content-Type: application/json" \
--d '{
-"decision":"escalate",
-"decisionMaker":"officer1"
-}'
-
-sleep 3
-
-echo ""
-echo "----------------------------------"
-echo "Scenario 3: Screening hit → DECLINE"
-echo "----------------------------------"
-
-# Screening hit case (John Doe already in sanctions list)
-./test-ubo-processor.sh
-
-# Officer declines
-curl -X POST http://localhost:3001/api/cases/103/decision \
--H "Content-Type: application/json" \
--d '{
-"decision":"decline",
-"decisionMaker":"officer1"
-}'
-
-sleep 3
-
-echo ""
-echo "----------------------------------"
-echo "Checking Kafka Topics"
-echo "----------------------------------"
-
-docker exec kyb_kafka kafka-console-consumer \
---bootstrap-server localhost:9092 \
---topic kyb.risk.scored \
---from-beginning \
---timeout-ms 5000
-
-echo ""
-echo "----------------------------------"
-echo "Check Neo4j"
-echo "----------------------------------"
-
-echo "Open Neo4j Browser:"
-echo "http://localhost:7474"
-
-echo ""
-echo "Demo completed successfully!"
-
-
-
-
-
-
-
-
-
-http://localhost:3001/api/queues/kyc-officer
-
-http://localhost:3001/api/cases/101
-
-
-const path = require('path');
-
-app.use(express.static(path.join(__dirname, 'public')));
-
-
-
-
-
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
-<title>KYB Officer Workbench</title>
-<link rel="stylesheet" href="style.css">
+  <title>KYC Officer Queue</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    table { border-collapse: collapse; width: 70%; }
+    th, td { border: 1px solid #ccc; padding: 10px; text-align: center; }
+    th { background-color: #f2f2f2; }
+    .high { color: red; font-weight: bold; }
+    .medium { color: orange; }
+    .low { color: green; }
+  </style>
 </head>
 
 <body>
 
-<h1>KYC Officer Queue</h1>
+<h2>KYC Officer Queue</h2>
 
 <table id="queueTable">
-<thead>
-<tr>
-<th>Case ID</th>
-<th>Status</th>
-<th>Risk Score</th>
-</tr>
-</thead>
-
-<tbody></tbody>
-
+  <thead>
+    <tr>
+      <th>Case ID</th>
+      <th>Status</th>
+      <th>Risk Score</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
 </table>
 
 <script>
 
+function getRiskClass(score) {
+  if (score >= 70) return 'high';
+  if (score >= 40) return 'medium';
+  return 'low';
+}
+
 async function loadQueue() {
 
-const res = await fetch('/api/queues/kyc-officer');
-const data = await res.json();
+  const res = await fetch('/api/queues/kyc-officer');
+  const data = await res.json();
 
-const table = document.querySelector("#queueTable tbody");
+  const table = document.querySelector("#queueTable tbody");
+  table.innerHTML = "";
 
-data.forEach(caseItem => {
+  data.cases.forEach(caseItem => {
 
-const row = document.createElement("tr");
+    const row = document.createElement("tr");
 
-row.innerHTML = `
-<td><a href="case.html?id=${caseItem.caseId}">${caseItem.caseId}</a></td>
-<td>${caseItem.status}</td>
-<td>${caseItem.score}</td>
-`;
+    const riskClass = getRiskClass(caseItem.riskScore);
 
-table.appendChild(row);
+    row.innerHTML = `
+      <td>
+        <a href="case.html?id=${caseItem.caseId}">
+          ${caseItem.caseId}
+        </a>
+      </td>
+      <td>NEEDS_REVIEW</td>
+      <td class="${riskClass}">${caseItem.riskScore}</td>
+    `;
 
-});
-
+    table.appendChild(row);
+  });
 }
 
 loadQueue();
@@ -163,19 +75,21 @@ loadQueue();
 
   <!DOCTYPE html>
 <html>
-
 <head>
-<title>Case Details</title>
-<link rel="stylesheet" href="style.css">
+  <title>Case Details</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    button { margin: 5px; padding: 10px; }
+  </style>
 </head>
 
 <body>
 
-<h1>Case Details</h1>
+<h2>Case Details</h2>
 
 <div id="caseInfo"></div>
 
-<h2>Decision</h2>
+<h3>Decision</h3>
 
 <button onclick="makeDecision('approve')">Approve</button>
 <button onclick="makeDecision('decline')">Decline</button>
@@ -188,30 +102,32 @@ const caseId = params.get("id");
 
 async function loadCase() {
 
-const res = await fetch(`/api/cases/${caseId}`);
-const data = await res.json();
+  const res = await fetch(`/api/cases/${caseId}`);
+  const data = await res.json();
 
-document.getElementById("caseInfo").innerHTML =
-`
-<p>Case ID: ${data.caseId}</p>
-<p>Status: ${data.status}</p>
-<p>Risk Score: ${data.score}</p>
-`;
-
+  document.getElementById("caseInfo").innerHTML = `
+    <p><b>Case ID:</b> ${data.caseId}</p>
+    <p><b>Company:</b> ${data.company}</p>
+    <p><b>UBOs:</b> ${data.ubos.join(', ')}</p>
+    <p><b>Risk Score:</b> ${data.riskScore}</p>
+    <p><b>Factors:</b> ${data.factors.join(', ')}</p>
+  `;
 }
 
 async function makeDecision(decision) {
 
-await fetch(`/api/cases/${caseId}/decision`, {
-method: "POST",
-headers: { "Content-Type": "application/json" },
-body: JSON.stringify({
-decision: decision,
-decisionMaker: "officer1"
-})
-});
+  await fetch(`/api/cases/${caseId}/decision`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      decision: decision,
+      decisionMaker: "officer1"
+    })
+  });
 
-alert("Decision submitted");
+  alert("Decision submitted!");
 
 }
 
@@ -220,31 +136,6 @@ loadCase();
 </script>
 
 </body>
-
 </html>
-
-
-
-  body {
-font-family: Arial;
-margin: 40px;
-}
-
-table {
-border-collapse: collapse;
-width: 60%;
-}
-
-th, td {
-border: 1px solid #ddd;
-padding: 10px;
-}
-
-button {
-padding: 10px 15px;
-margin: 10px;
-cursor: pointer;
-    }
-
 
   
