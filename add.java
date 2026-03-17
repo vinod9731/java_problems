@@ -1,33 +1,3 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>KYC Officer Queue</title>
-  <style>
-    body { font-family: Arial; margin: 20px; }
-    table { border-collapse: collapse; width: 70%; }
-    th, td { border: 1px solid #ccc; padding: 10px; text-align: center; }
-    th { background-color: #f2f2f2; }
-    .high { color: red; font-weight: bold; }
-    .medium { color: orange; }
-    .low { color: green; }
-  </style>
-</head>
-
-<body>
-
-<h2>KYC Officer Queue</h2>
-
-<table id="queueTable">
-  <thead>
-    <tr>
-      <th>Case ID</th>
-      <th>Status</th>
-      <th>Risk Score</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
-
 <script>
 
 function getRiskClass(score) {
@@ -46,9 +16,11 @@ async function loadQueue() {
 
   data.cases.forEach(caseItem => {
 
+    const score = caseItem.riskScore?.low || 0;
+
     const row = document.createElement("tr");
 
-    const riskClass = getRiskClass(caseItem.riskScore);
+    const riskClass = getRiskClass(score);
 
     row.innerHTML = `
       <td>
@@ -57,7 +29,7 @@ async function loadQueue() {
         </a>
       </td>
       <td>NEEDS_REVIEW</td>
-      <td class="${riskClass}">${caseItem.riskScore}</td>
+      <td class="${riskClass}">${score}</td>
     `;
 
     table.appendChild(row);
@@ -66,47 +38,7 @@ async function loadQueue() {
 
 loadQueue();
 
-</script>
-
-</body>
-</html>
-
-
-
-  <!DOCTYPE html>
-<html>
-<head>
-  <title>Case Details</title>
-  <style>
-    body { font-family: Arial; margin: 20px; }
-    button { margin: 5px; padding: 10px; }
-  </style>
-</head>
-
-<body>
-
-<h2>Case Details</h2>
-
-<div id="caseInfo"></div>
-
-<h3>Decision</h3>
-
-<button onclick="makeDecision('approve')">Approve</button>
-<button onclick="makeDecision('decline')">Decline</button>
-<button onclick="makeDecision('escalate')">Escalate</button>
-
-<script>
-
-const params = new URLSearchParams(window.location.search);
-const caseId = params.get("id");
-
-async function loadCase() {
-
-  const res = await fetch(`/api/cases/${caseId}`);
-  const data = await res.json();
-
-  document.getElementById("caseInfo").innerHTML = `
-    <p><b>Case ID:</b> ${data.caseId}</p>
+</script>    <p><b>Case ID:</b> ${data.caseId}</p>
     <p><b>Company:</b> ${data.company}</p>
     <p><b>UBOs:</b> ${data.ubos.join(', ')}</p>
     <p><b>Risk Score:</b> ${data.riskScore}</p>
