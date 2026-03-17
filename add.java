@@ -1,12 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>KYC Officer Queue</title>
+</head>
+
+<body>
+
+<h2>KYC Officer Queue</h2>
+
+<table border="1" id="queueTable">
+  <thead>
+    <tr>
+      <th>Case ID</th>
+      <th>Status</th>
+      <th>Risk Score</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script>
 
-function getRiskClass(score) {
-  if (score >= 70) return 'high';
-  if (score >= 40) return 'medium';
-  return 'low';
-}
+console.log("SCRIPT LOADED");
 
 async function loadQueue() {
+
+  console.log("Fetching API...");
 
   const res = await fetch('/api/queues/kyc-officer');
   const data = await res.json();
@@ -14,17 +33,10 @@ async function loadQueue() {
   console.log("API DATA:", data);
 
   const table = document.querySelector("#queueTable tbody");
-  table.innerHTML = "";
-
-  if (!data.cases || data.cases.length === 0) {
-    console.log("No cases found");
-    return;
-  }
 
   data.cases.forEach(caseItem => {
 
-    const score = caseItem.riskScore?.low || 0;
-    const riskClass = getRiskClass(score);
+    const score = caseItem.riskScore.low;
 
     const row = document.createElement("tr");
 
@@ -35,7 +47,7 @@ async function loadQueue() {
         </a>
       </td>
       <td>NEEDS_REVIEW</td>
-      <td class="${riskClass}">${score}</td>
+      <td>${score}</td>
     `;
 
     table.appendChild(row);
@@ -45,3 +57,6 @@ async function loadQueue() {
 loadQueue();
 
 </script>
+
+</body>
+</html>
