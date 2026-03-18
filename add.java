@@ -1,38 +1,50 @@
-<script>
+const express = require("express");
+const bodyParser = require("body-parser");
+const { Kafka } = require("kafkajs");
 
-async function loadQueue() {
+const app = express();
+app.use(bodyParser.json());
 
-  const res = await fetch('/api/queues/kyc-officer');
-  const data = await res.json();
+// Kafka setup
+const kafka = new Kafka({
+  clientId: "kyb-app",
+  brokers: ["localhost:9092"]   // since you're running locally
+});
 
-  console.log("API RESPONSE:", data);
+const producer = kafka.producer();
 
-  const table = document.querySelector("#queueTable tbody");
-  table.innerHTML = "";
+async function start() {
+  await producer.connect();
+  console.log("Kafka connected");
 
-  // ✅ Correct usage
-  const cases = data.cases || [];
+  // POST /cases
+  app.post("/cases", async (req, res) => {
+    try {
+      const event = {
+        eventType: "kyb.case.created",
+        payload: {
+          ...req.body,
+          eventId: `evt-${Date.now()}`,
+          timestamp: new Date().toISOString()
+        }
+      };
 
-  cases.forEach(caseItem => {
+      await producer.send({
+        topic: "kyb.case.created",
+        messages: [{ value: JSON.stringify(event) }]
+      });
 
-    const score = caseItem.riskScore?.low || 0;
+      res.json({ message: "Event sent to Kafka", event });
 
-    const row = document.createElement("tr");
+    } catch (err) {
+      console.error(err);
+      res.status(500).send("Error sending event");
+    }
+  });
 
-    row.innerHTML = `
-      <td>
-        <a href="case.html?id=${caseItem.caseId}">
-          ${caseItem.caseId}
-        </a>
-      </td>
-      <td>NEEDS_REVIEW</td>
-      <td>${score}</td>
-    `;
-
-    table.appendChild(row);
+  app.listen(3000, () => {
+    console.log("Server running on port 3000");
   });
 }
 
-loadQueue();
-
-</script>
+start();
