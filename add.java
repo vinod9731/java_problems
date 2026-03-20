@@ -1,84 +1,180 @@
-version: "3.8"
+Short answer 👇
 
-services:
+👉 Yes, you can use memgraph-client.js
+👉 But DO NOT use mgclient npm package (it caused your error ❌)
 
-  kafka:
-    image: docker-remote.artifactory.cib.echonet/confluentinc/cp-kafka:7.4.0
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
 
-      # 🔥 DUAL LISTENER FIX
-      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:29092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+---
 
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+🧠 What is memgraph-client.js?
 
-      # 🔥 SINGLE NODE FIX
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+It’s just a custom wrapper file you create to:
 
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+connect to Memgraph
 
-  kafka-connect:
-    image: docker-remote.artifactory.cib.echonet/confluentinc/cp-kafka-connect:6.2.0
-    container_name: kafka-connect
-    depends_on:
-      - kafka
-    ports:
-      - "8083:8083"
-    environment:
-      # 🔥 IMPORTANT FIX
-      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+reuse connection across your app
 
-      CONNECT_REST_PORT: 8083
-      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
 
-      CONNECT_GROUP_ID: "connect-group"
-      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
-      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
-      CONNECT_STATUS_STORAGE_TOPIC: connect-status
+👉 internally it should use:
 
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+neo4j-driver
 
-      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
-      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
 
-      CONNECT_PLUGIN_PATH: /usr/share/java
+---
 
-  kafdrop:
-    image: docker-remote.artifactory.cib.echonet/obsidiandynamics/kafdrop:latest
-    container_name: kafdrop
-    depends_on:
-      - kafka
-    ports:
-      - "9000:9000"
-    environment:
-      KAFKA_BROKERCONNECT: kafka:29092
+✅ BEST PRACTICE (Recommended)
 
-  memgraph:
-    image: docker-remote.artifactory.cib.echonet/memgraph/memgraph:latest
-    container_name: memgraph
-    ports:
-      - "7687:7687"
-      - "7444:7444"
+👉 Create your own client file
+👉 Use neo4j-driver inside it
 
-  memgraph-lab:
-    image: docker-remote.artifactory.cib.echonet/memgraph/lab:latest
-    container_name: memgraph-lab
-    ports:
-      - "3000:3000"
-    depends_on:
-      - memgraph
+
+---
+
+🪜 STEP 1 — Create File
+
+📁 services/consumers/src/memgraph-client.js
+
+const neo4j = require("neo4j-driver");
+
+const driver = neo4j.driver(
+  "bolt://localhost:7687",
+  neo4j.auth.basic("", "") // default for Memgraph
+);
+
+const getSession = () => {
+  return driver.session();
+};
+
+module.exports = { getSession };
+
+
+---
+
+🪜 STEP 2 — Use in Consumer
+
+📁 ownership-consumer.js
+
+Replace connection code with:
+
+const { getSession } = require("./memgraph-client");
+
+Then inside your consumer:
+
+const session = getSession();
+
+
+---
+
+🪜 FULL CLEAN VERSION (IMPORTANT)
+
+const { Kafka } = require("kafkajs");
+const { getSession } = require("./memgraph-client");
+
+const kafka = new Kafka({
+  clientId: "kyb-consumer",
+  brokers: ["localhost:9092"],
+});
+
+const consumer = kafka.consumer({ groupId: "ownership-group" });
+
+const run = async () => {
+  await consumer.connect();
+  await consumer.subscribe({ topic: "kyb.ownership.submitted", fromBeginning: true });
+
+  const session = getSession();
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      const data = JSON.parse(message.value.toString());
+
+      console.log("Received event:", data);
+
+      try {
+        for (const node of data.nodes) {
+          await session.run(
+            `MERGE (n:${node.type} {id: $id})
+             SET n.name = $name`,
+            { id: node.id, name: node.name }
+          );
+        }
+
+        for (const edge of data.edges) {
+          await session.run(
+            `MATCH (a {id: $from}), (b {id: $to})
+             MERGE (a)-[r:OWNS]->(b)
+             SET r.pct = $pct`,
+            {
+              from: edge.from,
+              to: edge.to,
+              pct: edge.pct,
+            }
+          );
+        }
+
+        console.log("Graph updated in Memgraph ✅");
+
+      } catch (err) {
+        console.error("Error:", err);
+      }
+    },
+  });
+};
+
+run();
+
+
+---
+
+🚨 IMPORTANT NOTE
+
+Option	Status
+
+mgclient ❌	Broken / avoid
+neo4j-driver ✅	Correct
+memgraph-client.js ✅	Just wrapper (recommended)
+
+
+
+---
+
+🔥 WHY THIS IS GOOD
+
+You now have:
+
+👉 clean architecture
+👉 reusable DB connection
+👉 production-style code
+
+
+---
+
+🎯 NEXT STEP
+
+Run again:
+
+node services/consumers/src/ownership-consumer.js
+
+
+
+Then:
+
+./scripts/seed-ownership.sh
+
+
+---
+
+🚀 AFTER THIS
+
+Tell me:
+
+👉 "Graph visible"
+
+Then we go to:
+
+🔥 UBO calculation (core feature)
+🔥 graph traversal logic
+
+
+---
+
+You’re now writing real backend architecture code 💯
