@@ -1,180 +1,216 @@
-Short answer 👇
+Yes 👍 — 100% you should dockerize both workbench-api and consumer.
+This is the correct production-style setup.
 
-👉 Yes, you can use memgraph-client.js
-👉 But DO NOT use mgclient npm package (it caused your error ❌)
+Right now you’re manually doing:
 
+node src/index.js
+node ownership-consumer.js
 
----
-
-🧠 What is memgraph-client.js?
-
-It’s just a custom wrapper file you create to:
-
-connect to Memgraph
-
-reuse connection across your app
-
-
-👉 internally it should use:
-
-neo4j-driver
+👉 We’ll automate this using Docker Compose 🔥
 
 
 ---
 
-✅ BEST PRACTICE (Recommended)
+🧠 FINAL ARCHITECTURE (after this)
 
-👉 Create your own client file
-👉 Use neo4j-driver inside it
-
-
----
-
-🪜 STEP 1 — Create File
-
-📁 services/consumers/src/memgraph-client.js
-
-const neo4j = require("neo4j-driver");
-
-const driver = neo4j.driver(
-  "bolt://localhost:7687",
-  neo4j.auth.basic("", "") // default for Memgraph
-);
-
-const getSession = () => {
-  return driver.session();
-};
-
-module.exports = { getSession };
+workbench-api (container)
+        ↓
+Kafka
+        ↓
+consumer (container)
+        ↓
+Memgraph
 
 
 ---
 
-🪜 STEP 2 — Use in Consumer
+🚀 STEP 1 — Create Dockerfile (API)
 
-📁 ownership-consumer.js
+📁 services/workbench-api/Dockerfile
 
-Replace connection code with:
+FROM node:18
 
-const { getSession } = require("./memgraph-client");
+WORKDIR /app
 
-Then inside your consumer:
+COPY package*.json ./
+RUN npm install
 
-const session = getSession();
+COPY . .
 
-
----
-
-🪜 FULL CLEAN VERSION (IMPORTANT)
-
-const { Kafka } = require("kafkajs");
-const { getSession } = require("./memgraph-client");
-
-const kafka = new Kafka({
-  clientId: "kyb-consumer",
-  brokers: ["localhost:9092"],
-});
-
-const consumer = kafka.consumer({ groupId: "ownership-group" });
-
-const run = async () => {
-  await consumer.connect();
-  await consumer.subscribe({ topic: "kyb.ownership.submitted", fromBeginning: true });
-
-  const session = getSession();
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      const data = JSON.parse(message.value.toString());
-
-      console.log("Received event:", data);
-
-      try {
-        for (const node of data.nodes) {
-          await session.run(
-            `MERGE (n:${node.type} {id: $id})
-             SET n.name = $name`,
-            { id: node.id, name: node.name }
-          );
-        }
-
-        for (const edge of data.edges) {
-          await session.run(
-            `MATCH (a {id: $from}), (b {id: $to})
-             MERGE (a)-[r:OWNS]->(b)
-             SET r.pct = $pct`,
-            {
-              from: edge.from,
-              to: edge.to,
-              pct: edge.pct,
-            }
-          );
-        }
-
-        console.log("Graph updated in Memgraph ✅");
-
-      } catch (err) {
-        console.error("Error:", err);
-      }
-    },
-  });
-};
-
-run();
+CMD ["node", "src/index.js"]
 
 
 ---
 
-🚨 IMPORTANT NOTE
+🚀 STEP 2 — Create Dockerfile (Consumer)
 
-Option	Status
+📁 services/consumers/Dockerfile
 
-mgclient ❌	Broken / avoid
-neo4j-driver ✅	Correct
-memgraph-client.js ✅	Just wrapper (recommended)
+FROM node:18
 
+WORKDIR /app
 
+COPY package*.json ./
+RUN npm install
 
----
+COPY . .
 
-🔥 WHY THIS IS GOOD
-
-You now have:
-
-👉 clean architecture
-👉 reusable DB connection
-👉 production-style code
+CMD ["node", "src/ownership-consumer.js"]
 
 
 ---
 
-🎯 NEXT STEP
+🚀 STEP 3 — Update docker-compose.yml
 
-Run again:
+Add these 2 services 👇
 
-node services/consumers/src/ownership-consumer.js
+workbench-api:
+    build: ./services/workbench-api
+    container_name: workbench-api
+    depends_on:
+      - kafka
+    ports:
+      - "3001:3001"
+    environment:
+      KAFKA_BROKER: kafka:29092
+    command: node src/index.js
+
+  consumer:
+    build: ./services/consumers
+    container_name: consumer
+    depends_on:
+      - kafka
+      - memgraph
+    environment:
+      KAFKA_BROKER: kafka:29092
+      MEMGRAPH_HOST: memgraph
+    command: node src/ownership-consumer.js
 
 
+---
 
-Then:
+🔥 IMPORTANT CHANGES IN CODE
+
+✅ API (producer.js)
+
+Replace:
+
+brokers: ["localhost:9092"]
+
+👉 with:
+
+brokers: [process.env.KAFKA_BROKER || "localhost:9092"]
+
+
+---
+
+✅ Consumer
+
+Replace:
+
+brokers: ["localhost:9092"]
+
+👉 with:
+
+brokers: [process.env.KAFKA_BROKER || "localhost:9092"]
+
+
+---
+
+✅ Memgraph connection
+
+Replace:
+
+bolt://localhost:7687
+
+👉 with:
+
+bolt://memgraph:7687
+
+
+---
+
+🚀 STEP 4 — Rebuild Everything
+
+docker-compose down
+docker-compose up --build
+
+
+---
+
+🔍 STEP 5 — Verify
+
+Check containers:
+
+docker ps
+
+You should see:
+
+kafka
+kafka-connect
+kafdrop
+memgraph
+workbench-api
+consumer
+
+
+---
+
+🧪 STEP 6 — Test
 
 ./scripts/seed-ownership.sh
 
 
 ---
 
-🚀 AFTER THIS
+🎯 EXPECTED
 
-Tell me:
-
-👉 "Graph visible"
-
-Then we go to:
-
-🔥 UBO calculation (core feature)
-🔥 graph traversal logic
+✔ No manual node commands needed
+✔ Everything auto-starts
+✔ Consumer always listening
+✔ Graph updates automatically
 
 
 ---
 
-You’re now writing real backend architecture code 💯
+🔥 WHY THIS IS IMPORTANT
+
+Without Docker ❌	With Docker ✅
+
+manual start	auto start
+error-prone	consistent
+not scalable	production-ready
+
+
+
+---
+
+🚀 BONUS (VERY IMPORTANT)
+
+Later you can:
+
+deploy this to cloud ☁️
+
+scale consumers 🔥
+
+add more services
+
+
+
+---
+
+🎯 NEXT STEP
+
+After running docker:
+
+👉 tell me “All containers running + graph working”
+
+Then we move to:
+
+🔥 UBO calculation (core business logic)
+🔥 graph traversal
+
+
+---
+
+You’re now building a real event-driven microservices system 💯
