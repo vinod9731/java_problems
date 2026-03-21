@@ -1,93 +1,228 @@
-Perfect 👌 your code is almost correct — I can see the issue clearly now from your screenshot.
+Perfect timing 👍 — this is exactly what you need to debug + explain your project clearly.
+
+I’ll give you a full verification checklist (step-by-step) with: ✔ Query
+✔ What it checks
+✔ Expected result
 
 
 ---
 
-🚨 ROOT CAUSE (IMPORTANT)
+🚀 🔍 MEMGRAPH VERIFICATION QUERIES (FULL FLOW)
 
-In your query, you are MISSING case filter ❌
 
-MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
+---
 
-👉 This means:
+🧪 1. Check if ANY data exists
 
-It calculates UBO across ALL cases
+MATCH (n) RETURN n LIMIT 20;
 
-But your API filters by caseId
+✅ What it verifies:
 
-So API returns → ❌ empty
+👉 Whether your consumer is writing data to Memgraph
+
+🎯 Expected:
+
+Nodes like Person, Company, KybCase
 
 
 
 ---
 
-✅ FIX (JUST ADD THIS LINE)
-
-Update your query like this 👇
-
-const result = await session.run(
-  `
-  MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
-  WHERE p.caseId = $caseId AND c.caseId = $caseId   // 🔥 ADD THIS
-
-  WITH p, c,
-    reduce(total = 1.0, r IN rels | total * (r.pct / 100.0)) AS effectivePct
-
-  WHERE effectivePct >= 0.25
-
-  MERGE (p)-[r:IS_UBO_OF]->(c)
-  SET r.effectivePct = effectivePct
-
-  RETURN p.name AS person, c.name AS company, effectivePct
-  ORDER BY effectivePct DESC
-  `,
-  { caseId }
-);
-
-
----
-
-🔥 ALSO VERIFY (VERY IMPORTANT)
-
-👉 Do your nodes have caseId?
-
-Run in Memgraph:
+👤 2. Verify PERSON nodes
 
 MATCH (p:Person)
-RETURN p.name, p.caseId;
+RETURN p.name, p.personId, p.caseId;
 
-👉 If caseId = null → then problem is in ownership consumer
+✅ What it verifies:
 
+👉 Person nodes are created correctly
 
----
+🎯 Expected:
 
-✅ IF caseId is missing → FIX THIS
-
-In your ownership-consumer.js, ensure:
-
-MERGE (p:Person {personId: node.id})
-SET p.name = node.name,
-    p.caseId = $caseId   // 🔥 MUST
-
-MERGE (c:Company {companyId: node.id})
-SET c.name = node.name,
-    c.caseId = $caseId   // 🔥 MUST
+John | person-1 | case-1
+Alice | person-2 | case-1
 
 
 ---
 
-🔁 AFTER FIX
+🏢 3. Verify COMPANY nodes
 
-docker-compose down
-docker-compose up --build
-./scripts/seed-ownership.sh
+MATCH (c:Company)
+RETURN c.name, c.companyId, c.caseId;
+
+✅ What it verifies:
+
+👉 Company nodes exist and linked to case
 
 
 ---
 
-✅ FINAL EXPECTED RESULT
+🔗 4. Verify OWNERSHIP relationships
 
-API:
+MATCH (a)-[r:OWNS]->(b)
+RETURN a.name, b.name, r.pct;
+
+✅ What it verifies:
+
+👉 Ownership graph is built correctly
+
+🎯 Example:
+
+John → ABC Ltd → 50%
+ABC Ltd → XYZ Ltd → 60%
+
+
+---
+
+📂 5. Verify CASE node
+
+MATCH (c:KybCase)
+RETURN c.caseId, c.status;
+
+✅ What it verifies:
+
+👉 Case node creation
+
+
+---
+
+🔗 6. Verify Case → Company link
+
+MATCH (c:KybCase)-[:TARGET]->(comp:Company)
+RETURN c.caseId, comp.name;
+
+✅ What it verifies:
+
+👉 Root company connection
+
+
+---
+
+🔥 7. Verify UBO calculation logic (RAW)
+
+MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
+WITH p, c,
+     reduce(total = 1.0, r IN rels | total * (r.pct / 100.0)) AS effectivePct
+RETURN p.name, c.name, effectivePct
+ORDER BY effectivePct DESC;
+
+✅ What it verifies:
+
+👉 Ownership chain calculation works
+
+
+---
+
+🎯 8. Verify FINAL UBO relationships
+
+MATCH (p:Person)-[r:IS_UBO_OF]->(c:Company)
+RETURN p.name, c.name, r.effectivePct
+ORDER BY r.effectivePct DESC;
+
+✅ What it verifies:
+
+👉 Final UBO output stored in graph
+
+
+---
+
+🧠 9. Verify CASE-FILTERED UBO (IMPORTANT)
+
+MATCH (p:Person)-[r:IS_UBO_OF]->(c:Company)
+WHERE p.caseId = "case-1" AND c.caseId = "case-1"
+RETURN p.name, c.name, r.effectivePct;
+
+✅ What it verifies:
+
+👉 Your API logic correctness
+
+
+---
+
+🧪 10. Check if data is missing caseId (COMMON BUG)
+
+MATCH (n)
+WHERE n.caseId IS NULL
+RETURN labels(n), n;
+
+✅ What it verifies:
+
+👉 Why API returns empty
+
+
+---
+
+🔍 11. Debug missing relationships
+
+MATCH (p:Person)
+WHERE NOT (p)-[:OWNS]->()
+RETURN p.name;
+
+✅ What it verifies:
+
+👉 Persons not connected → no UBO
+
+
+---
+
+📊 12. Count everything (quick health check)
+
+MATCH (n)
+RETURN labels(n), count(n);
+
+
+---
+
+🚀 🔁 KAFKA VERIFICATION
+
+
+---
+
+📥 13. Check ownership events
+
+👉 Topic: kyb.ownership.submitted
+
+Expected:
+
+{
+  "caseId": "case-1",
+  "nodes": [...],
+  "edges": [...]
+}
+
+
+---
+
+📤 14. Check UBO output
+
+👉 Topic: kyb.ubo.discovered
+
+Expected:
+
+{
+  "caseId": "case-1",
+  "ubos": [
+    {
+      "person": "John",
+      "company": "XYZ Ltd",
+      "effectivePct": 0.3
+    }
+  ]
+}
+
+
+---
+
+🌐 API VERIFICATION
+
+
+---
+
+🔗 15. API check
+
+GET http://localhost:3001/cases/case-1/ubo
+
+✅ Expected:
 
 {
   "caseId": "case-1",
@@ -95,40 +230,18 @@ API:
   "ubos": [...]
 }
 
-Memgraph:
-
-MATCH (p)-[r:IS_UBO_OF]->(c)
-RETURN p.name, c.name, r.effectivePct;
-
-➡️ Should return data ✅
-
 
 ---
 
-🧠 WHY THIS HAPPENED
+🧠 FINAL DEBUG FLOW (VERY IMPORTANT)
 
-Component	Behavior
+If something fails, follow this order:
 
-Consumer	Created UBO without case filter
-API	Filters by caseId
-Result	No match → empty
+1. Kafka topic → data present? ✅
+2. ownership-consumer → writing? ✅
+3. Memgraph → nodes exist? ✅
+4. Relationships → created? ✅
+5. UBO query → working? ✅
+6. UBO processor → emitting? ✅
+7. API → reading correctly? ✅
 
-
-
----
-
-🚀 FINAL STATUS
-
-👉 Your architecture is correct
-👉 Your logic is correct
-👉 Just missing caseId consistency
-
-
----
-
-If you want next:
-
-👉 I can review your full flow (Intern A + B complete check)
-👉 Or help you prepare explanation for demo
-
-Just tell 👍
