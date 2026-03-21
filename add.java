@@ -1,228 +1,134 @@
-Perfect 🔥 now your data model is clean (p.name exists) — you’re ready for the final UBO processor.
-
-Below is a complete, production-ready ubo-processor.js that:
-
-✅ Consumes kyb.ownership.submitted
-✅ Runs UBO query in Memgraph
-✅ Applies 25% threshold
-✅ Creates IS_UBO_OF relationships
-✅ Emits kyb.ubo.discovered
-✅ Includes logs (for debugging)
+Perfect 👌 your code is almost correct — I can see the issue clearly now from your screenshot.
 
 
 ---
 
-🚀 ✅ FINAL ubo-processor.js
+🚨 ROOT CAUSE (IMPORTANT)
 
-📁 services/consumers/src/ubo-processor.js
+In your query, you are MISSING case filter ❌
 
-const { Kafka } = require("kafkajs");
-const { getSession } = require("./memgraph-client");
+MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
 
-// Kafka setup
-const kafka = new Kafka({
-  clientId: "ubo-processor",
-  brokers: [process.env.KAFKA_BROKER || "kafka:9092"],
-});
+👉 This means:
 
-const consumer = kafka.consumer({ groupId: "ubo-group" });
-const producer = kafka.producer();
+It calculates UBO across ALL cases
 
-const run = async () => {
-  await consumer.connect();
-  await producer.connect();
+But your API filters by caseId
 
-  await consumer.subscribe({
-    topic: "kyb.ownership.submitted",
-    fromBeginning: true,
-  });
+So API returns → ❌ empty
 
-  console.log("🚀 UBO processor started...");
-
-  await consumer.run({
-    eachMessage: async ({ topic, partition, message }) => {
-      try {
-        const data = JSON.parse(message.value.toString());
-        const caseId = data.caseId;
-
-        console.log(`📥 Processing case: ${caseId}`);
-
-        const session = getSession();
-
-        // 🔥 UBO QUERY
-        const result = await session.run(
-          `
-          MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
-
-          WITH p, c,
-            reduce(total = 1.0, r IN rels | total * (r.pct / 100.0)) AS effectivePct
-
-          WHERE effectivePct >= 0.25
-
-          MERGE (p)-[r:IS_UBO_OF]->(c)
-          SET r.effectivePct = effectivePct
-
-          RETURN p.name AS person, c.name AS company, effectivePct
-          ORDER BY effectivePct DESC
-          `
-        );
-
-        // Format results
-        const ubos = result.records.map((record) => ({
-          person: record.get("person"),
-          company: record.get("company"),
-          effectivePct: record.get("effectivePct"),
-        }));
-
-        console.log("✅ UBOs found:", ubos);
-
-        // Emit event to Kafka
-        const event = {
-          caseId,
-          ubos,
-          timestamp: new Date().toISOString(),
-        };
-
-        await producer.send({
-          topic: "kyb.ubo.discovered",
-          messages: [
-            {
-              value: JSON.stringify(event),
-            },
-          ],
-        });
-
-        console.log(`📤 UBO event sent for case: ${caseId}`);
-
-        await session.close();
-      } catch (err) {
-        console.error("❌ Error processing UBO:", err);
-      }
-    },
-  });
-};
-
-run().catch(console.error);
 
 
 ---
 
-🔥 ALSO ENSURE THIS FILE EXISTS
+✅ FIX (JUST ADD THIS LINE)
 
-📁 memgraph-client.js
+Update your query like this 👇
 
-const neo4j = require("neo4j-driver");
+const result = await session.run(
+  `
+  MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
+  WHERE p.caseId = $caseId AND c.caseId = $caseId   // 🔥 ADD THIS
 
-const driver = neo4j.driver(
-  process.env.MEMGRAPH_URI || "bolt://memgraph:7687",
-  neo4j.auth.basic("", "")
+  WITH p, c,
+    reduce(total = 1.0, r IN rels | total * (r.pct / 100.0)) AS effectivePct
+
+  WHERE effectivePct >= 0.25
+
+  MERGE (p)-[r:IS_UBO_OF]->(c)
+  SET r.effectivePct = effectivePct
+
+  RETURN p.name AS person, c.name AS company, effectivePct
+  ORDER BY effectivePct DESC
+  `,
+  { caseId }
 );
 
-const getSession = () => driver.session();
 
-module.exports = { getSession };
+---
+
+🔥 ALSO VERIFY (VERY IMPORTANT)
+
+👉 Do your nodes have caseId?
+
+Run in Memgraph:
+
+MATCH (p:Person)
+RETURN p.name, p.caseId;
+
+👉 If caseId = null → then problem is in ownership consumer
 
 
 ---
 
-⚙️ docker-compose (IMPORTANT)
+✅ IF caseId is missing → FIX THIS
 
-Make sure this is correct:
+In your ownership-consumer.js, ensure:
 
-ubo-processor:
-  build: ./services/consumers
-  command: node src/ubo-processor.js
-  environment:
-    - KAFKA_BROKER=kafka:9092
-    - MEMGRAPH_URI=bolt://memgraph:7687
-  depends_on:
-    - kafka
-    - memgraph
+MERGE (p:Person {personId: node.id})
+SET p.name = node.name,
+    p.caseId = $caseId   // 🔥 MUST
+
+MERGE (c:Company {companyId: node.id})
+SET c.name = node.name,
+    c.caseId = $caseId   // 🔥 MUST
 
 
 ---
 
-🚀 RUN STEPS
+🔁 AFTER FIX
 
 docker-compose down
 docker-compose up --build
+./scripts/seed-ownership.sh
 
 
 ---
 
-✅ EXPECTED FLOW
+✅ FINAL EXPECTED RESULT
 
-POST /ownership
-   ↓
-kyb.ownership.submitted (Kafka)
-   ↓
-UBO Processor 🔥
-   ↓
-Memgraph (IS_UBO_OF created)
-   ↓
-kyb.ubo.discovered (Kafka)
-
-
----
-
-🔍 VERIFY
-
-1️⃣ Memgraph
-
-MATCH (p:Person)-[r:IS_UBO_OF]->(c:Company)
-RETURN p.name, c.name, r.effectivePct;
-
-
----
-
-2️⃣ Kafdrop
-
-👉 Topic: kyb.ubo.discovered
-
-You should see:
+API:
 
 {
   "caseId": "case-1",
-  "ubos": [
-    {
-      "person": "John",
-      "company": "Alpha Industries",
-      "effectivePct": 0.4
-    }
-  ],
-  "timestamp": "..."
+  "count": 2,
+  "ubos": [...]
 }
 
+Memgraph:
 
----
+MATCH (p)-[r:IS_UBO_OF]->(c)
+RETURN p.name, c.name, r.effectivePct;
 
-🎯 BONUS (OPTIONAL IMPROVEMENT)
-
-Add caseId filter later (best practice):
-
-WHERE p.caseId = $caseId AND c.caseId = $caseId
+➡️ Should return data ✅
 
 
 ---
 
-🔥 YOU ARE DONE WITH WEEK 3 CORE 🚀
+🧠 WHY THIS HAPPENED
 
-You now have:
+Component	Behavior
 
-✅ Graph ingestion
-✅ Ownership chain
-✅ UBO calculation
-✅ Kafka event pipeline
+Consumer	Created UBO without case filter
+API	Filters by caseId
+Result	No match → empty
+
 
 
 ---
 
-👉 NEXT (if you want)
+🚀 FINAL STATUS
 
-I can help you with:
+👉 Your architecture is correct
+👉 Your logic is correct
+👉 Just missing caseId consistency
 
-👉 UI / API to fetch UBO
-👉 Path count (advanced UBO logic)
-👉 Risk scoring / alerts
 
-Just tell me 👍
+---
+
+If you want next:
+
+👉 I can review your full flow (Intern A + B complete check)
+👉 Or help you prepare explanation for demo
+
+Just tell 👍
