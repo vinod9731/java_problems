@@ -1,29 +1,39 @@
-kafka:
-  image: docker-remote.artifactory.cib.echonet/confluentinc/cp-kafka:7.4.0
-  container_name: kafka
-  ports:
-    - "9092:9092"
+#!/bin/bash
 
-  environment:
-    KAFKA_NODE_ID: 1
-    KAFKA_PROCESS_ROLES: broker,controller
-    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+echo "🚀 Starting Kafka setup..."
 
-    # ✅ LISTENERS
-    KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+# Step 1: Start Kafka
+echo "📦 Starting Kafka container..."
+docker-compose up -d kafka
 
-    # ✅ ADVERTISED
-    KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+echo "⏳ Waiting for Kafka to be ready..."
+sleep 15
 
-    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+# Step 2: Create topics
+echo "🧱 Creating topics..."
 
-    KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
-    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+docker exec -it kafka kafka-topics.sh --create \
+--topic kyb.ownership.submitted \
+--bootstrap-server kafka:29092 \
+--partitions 1 --replication-factor 1
 
-    KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+docker exec -it kafka kafka-topics.sh --create \
+--topic kyb.ubo.discovered \
+--bootstrap-server kafka:29092 \
+--partitions 1 --replication-factor 1
 
-    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+docker exec -it kafka kafka-topics.sh --create \
+--topic kyb.screening.completed \
+--bootstrap-server kafka:29092 \
+--partitions 1 --replication-factor 1
 
-    CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+docker exec -it kafka kafka-topics.sh --create \
+--topic kyb.risk.scored \
+--bootstrap-server kafka:29092 \
+--partitions 1 --replication-factor 1
+
+# Step 3: List topics
+echo "📋 Verifying topics..."
+docker exec -it kafka kafka-topics.sh --list --bootstrap-server kafka:29092
+
+echo "✅ Kafka topics setup completed!"
