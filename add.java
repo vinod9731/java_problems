@@ -1,247 +1,567 @@
-Perfect timing 👍 — this is exactly what you need to debug + explain your project clearly.
+Perfect 🚀 — now let’s build Week 4 (Intern B) completely end-to-end, clean and production-style, based on your current setup.
 
-I’ll give you a full verification checklist (step-by-step) with: ✔ Query
-✔ What it checks
-✔ Expected result
+This will include:
 
+✅ screening-processor
 
----
+✅ risk-processor
 
-🚀 🔍 MEMGRAPH VERIFICATION QUERIES (FULL FLOW)
+✅ Memgraph updates (NO manual queries)
 
+✅ Kafka flow (NO manual topic creation)
 
----
-
-🧪 1. Check if ANY data exists
-
-MATCH (n) RETURN n LIMIT 20;
-
-✅ What it verifies:
-
-👉 Whether your consumer is writing data to Memgraph
-
-🎯 Expected:
-
-Nodes like Person, Company, KybCase
+✅ Works with your existing UBO processor
 
 
 
 ---
 
-👤 2. Verify PERSON nodes
+📁 📂 Folder Structure (VERY IMPORTANT)
 
-MATCH (p:Person)
-RETURN p.name, p.personId, p.caseId;
+Inside your project:
 
-✅ What it verifies:
-
-👉 Person nodes are created correctly
-
-🎯 Expected:
-
-John | person-1 | case-1
-Alice | person-2 | case-1
-
-
----
-
-🏢 3. Verify COMPANY nodes
-
-MATCH (c:Company)
-RETURN c.name, c.companyId, c.caseId;
-
-✅ What it verifies:
-
-👉 Company nodes exist and linked to case
+mem-kyb/
+ ├── services/
+ │    └── consumers/
+ │         └── src/
+ │              ├── memgraph-client.js
+ │              ├── screening-processor.js   ✅ NEW
+ │              ├── risk-processor.js        ✅ NEW
+ │              └── index.js                 (optional runner)
 
 
 ---
 
-🔗 4. Verify OWNERSHIP relationships
+🧠 1. screening-processor.js (FULL CODE)
 
-MATCH (a)-[r:OWNS]->(b)
-RETURN a.name, b.name, r.pct;
+👉 Consumes: kyb.ubo.discovered
+👉 Writes to Memgraph
+👉 Emits: kyb.screening.completed
 
-✅ What it verifies:
+const { Kafka } = require("kafkajs");
+const { getSession } = require("./memgraph-client");
 
-👉 Ownership graph is built correctly
+const kafka = new Kafka({
+  clientId: "screening-processor",
+  brokers: [process.env.KAFKA_BROKER || "kafka:9092"],
+});
 
-🎯 Example:
+const consumer = kafka.consumer({ groupId: "screening-group" });
+const producer = kafka.producer();
 
-John → ABC Ltd → 50%
-ABC Ltd → XYZ Ltd → 60%
+const run = async () => {
+  await consumer.connect();
+  await producer.connect();
 
+  await consumer.subscribe({
+    topic: "kyb.ubo.discovered",
+    fromBeginning: true,
+  });
 
----
+  console.log("🚀 Screening processor started...");
 
-📂 5. Verify CASE node
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      const data = JSON.parse(message.value.toString());
 
-MATCH (c:KybCase)
-RETURN c.caseId, c.status;
+      const { caseId, ubos } = data;
 
-✅ What it verifies:
+      console.log(`📥 Screening case: ${caseId}`);
 
-👉 Case node creation
+      const session = getSession();
 
+      // 🔍 Simulate screening (simple rule)
+      const screened = ubos.map((ubo) => {
+        const hit =
+          ubo.person.toLowerCase().includes("john") ||
+          ubo.person.toLowerCase().includes("alice");
 
----
+        return {
+          ...ubo,
+          screeningHit: hit,
+          status: hit ? "HIT" : "CLEAR",
+        };
+      });
 
-🔗 6. Verify Case → Company link
+      // ✅ Write to Memgraph
+      for (const ubo of screened) {
+        await session.run(
+          `
+          MATCH (p:Person {name: $person}), (c:KybCase {caseId: $caseId})
+          MERGE (check:Check {type: "SCREENING", person: $person})
+          SET check.status = $status,
+              check.details = $details
+          MERGE (p)-[:HAS_CHECK]->(check)
+          MERGE (c)-[:HAS_CHECK]->(check)
+          `,
+          {
+            person: ubo.person,
+            caseId,
+            status: ubo.status,
+            details: ubo.screeningHit
+              ? "Watchlist match"
+              : "No issues",
+          }
+        );
+      }
 
-MATCH (c:KybCase)-[:TARGET]->(comp:Company)
-RETURN c.caseId, comp.name;
+      // 📤 Emit event
+      await producer.send({
+        topic: "kyb.screening.completed",
+        messages: [
+          {
+            value: JSON.stringify({
+              caseId,
+              ubos: screened,
+              timestamp: new Date().toISOString(),
+            }),
+          },
+        ],
+      });
 
-✅ What it verifies:
+      console.log(`✅ Screening completed for ${caseId}`);
+    },
+  });
+};
 
-👉 Root company connection
-
-
----
-
-🔥 7. Verify UBO calculation logic (RAW)
-
-MATCH path = (p:Person)-[rels:OWNS*1..5]->(c:Company)
-WITH p, c,
-     reduce(total = 1.0, r IN rels | total * (r.pct / 100.0)) AS effectivePct
-RETURN p.name, c.name, effectivePct
-ORDER BY effectivePct DESC;
-
-✅ What it verifies:
-
-👉 Ownership chain calculation works
-
-
----
-
-🎯 8. Verify FINAL UBO relationships
-
-MATCH (p:Person)-[r:IS_UBO_OF]->(c:Company)
-RETURN p.name, c.name, r.effectivePct
-ORDER BY r.effectivePct DESC;
-
-✅ What it verifies:
-
-👉 Final UBO output stored in graph
-
-
----
-
-🧠 9. Verify CASE-FILTERED UBO (IMPORTANT)
-
-MATCH (p:Person)-[r:IS_UBO_OF]->(c:Company)
-WHERE p.caseId = "case-1" AND c.caseId = "case-1"
-RETURN p.name, c.name, r.effectivePct;
-
-✅ What it verifies:
-
-👉 Your API logic correctness
-
-
----
-
-🧪 10. Check if data is missing caseId (COMMON BUG)
-
-MATCH (n)
-WHERE n.caseId IS NULL
-RETURN labels(n), n;
-
-✅ What it verifies:
-
-👉 Why API returns empty
-
-
----
-
-🔍 11. Debug missing relationships
-
-MATCH (p:Person)
-WHERE NOT (p)-[:OWNS]->()
-RETURN p.name;
-
-✅ What it verifies:
-
-👉 Persons not connected → no UBO
+run().catch(console.error);
 
 
 ---
 
-📊 12. Count everything (quick health check)
+🧠 2. risk-processor.js (FULL CODE)
 
-MATCH (n)
-RETURN labels(n), count(n);
+👉 Consumes: kyb.screening.completed
+👉 Writes to Memgraph
+👉 Emits: kyb.risk.scored
+
+const { Kafka } = require("kafkajs");
+const { getSession } = require("./memgraph-client");
+
+const kafka = new Kafka({
+  clientId: "risk-processor",
+  brokers: [process.env.KAFKA_BROKER || "kafka:9092"],
+});
+
+const consumer = kafka.consumer({ groupId: "risk-group" });
+const producer = kafka.producer();
+
+const run = async () => {
+  await consumer.connect();
+  await producer.connect();
+
+  await consumer.subscribe({
+    topic: "kyb.screening.completed",
+    fromBeginning: true,
+  });
+
+  console.log("🚀 Risk processor started...");
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      const data = JSON.parse(message.value.toString());
+
+      const { caseId, ubos } = data;
+
+      console.log(`📥 Risk scoring case: ${caseId}`);
+
+      const session = getSession();
+
+      // 🧠 Calculate risk
+      let score = 0;
+      const reasons = [];
+
+      for (const ubo of ubos) {
+        if (ubo.screeningHit) {
+          score += 50;
+          reasons.push(`Screening hit: ${ubo.person}`);
+        }
+
+        if (ubo.effectivePct > 0.5) {
+          score += 20;
+          reasons.push(`High ownership: ${ubo.person}`);
+        }
+      }
+
+      const level =
+        score >= 70 ? "HIGH" : score >= 40 ? "MEDIUM" : "LOW";
+
+      // ✅ Write to Memgraph
+      await session.run(
+        `
+        MATCH (c:KybCase {caseId: $caseId})
+        MERGE (r:Risk {caseId: $caseId})
+        SET r.score = $score,
+            r.level = $level,
+            r.reason = $reason
+        MERGE (c)-[:HAS_RISK]->(r)
+        `,
+        {
+          caseId,
+          score,
+          level,
+          reason: reasons.join(", "),
+        }
+      );
+
+      // 📤 Emit event
+      await producer.send({
+        topic: "kyb.risk.scored",
+        messages: [
+          {
+            value: JSON.stringify({
+              caseId,
+              score,
+              level,
+              reasons,
+              timestamp: new Date().toISOString(),
+            }),
+          },
+        ],
+      });
+
+      console.log(`🔥 Risk scored for ${caseId}: ${level}`);
+    },
+  });
+};
+
+run().catch(console.error);
 
 
 ---
 
-🚀 🔁 KAFKA VERIFICATION
+🧠 3. memgraph-client.js (if not already correct)
+
+const neo4j = require("neo4j-driver");
+
+const driver = neo4j.driver(
+  process.env.MEMGRAPH_URI || "bolt://memgraph:7687",
+  neo4j.auth.basic("", "")
+);
+
+const getSession = () => driver.session();
+
+module.exports = { getSession };
 
 
 ---
 
-📥 13. Check ownership events
+🐳 4. Docker Setup (IMPORTANT)
 
-👉 Topic: kyb.ownership.submitted
+Add both processors in docker-compose.yml:
 
-Expected:
+screening-processor:
+  build: .
+  command: node services/consumers/src/screening-processor.js
+  depends_on:
+    - kafka
+    - memgraph
 
-{
-  "caseId": "case-1",
-  "nodes": [...],
-  "edges": [...]
-}
-
-
----
-
-📤 14. Check UBO output
-
-👉 Topic: kyb.ubo.discovered
-
-Expected:
-
-{
-  "caseId": "case-1",
-  "ubos": [
-    {
-      "person": "John",
-      "company": "XYZ Ltd",
-      "effectivePct": 0.3
-    }
-  ]
-}
+risk-processor:
+  build: .
+  command: node services/consumers/src/risk-processor.js
+  depends_on:
+    - kafka
+    - memgraph
 
 
 ---
 
-🌐 API VERIFICATION
+🚀 FINAL FLOW (END-TO-END)
+
+kyb.ownership.submitted
+        ↓
+ownership-consumer
+        ↓
+Memgraph graph created
+        ↓
+ubo-processor
+        ↓
+kyb.ubo.discovered
+        ↓
+screening-processor
+        ↓
+kyb.screening.completed
+        ↓
+risk-processor
+        ↓
+kyb.risk.scored
 
 
 ---
 
-🔗 15. API check
+🔍 FINAL VERIFICATION QUERIES
 
-GET http://localhost:3001/cases/case-1/ubo
+1. Check Screening
 
-✅ Expected:
-
-{
-  "caseId": "case-1",
-  "count": 2,
-  "ubos": [...]
-}
+MATCH (c:KybCase)-[:HAS_CHECK]->(check)
+RETURN c.caseId, check.status, check.details;
 
 
 ---
 
-🧠 FINAL DEBUG FLOW (VERY IMPORTANT)
+2. Check Risk
 
-If something fails, follow this order:
+MATCH (c:KybCase)-[:HAS_RISK]->(r)
+RETURN c.caseId, r.score, r.level;
 
-1. Kafka topic → data present? ✅
-2. ownership-consumer → writing? ✅
-3. Memgraph → nodes exist? ✅
-4. Relationships → created? ✅
-5. UBO query → working? ✅
-6. UBO processor → emitting? ✅
-7. API → reading correctly? ✅
+
+---
+
+3. High Risk Cases
+
+MATCH (c:KybCase)-[:HAS_RISK]->(r)
+WHERE r.level = "HIGH"
+RETURN c.caseId, r.score;
+
+
+---
+
+🎯 DONE — You Now Have:
+
+✅ Full Kafka event-driven pipeline
+✅ No manual topic creation
+✅ No manual queries
+✅ Memgraph fully integrated
+✅ Real-world KYB architecture
+
+
+---
+
+If you want next 🔥
+👉 I can help you connect this to UI (API endpoint)
+👉 Or prepare explanation for interview/demo
+
+
+
+
+
+const { Kafka } = require("kafkajs");
+const { getSession } = require("./memgraph-client");
+
+// 🔴 Watchlist (Sanctions list simulation)
+const WATCHLIST = [
+  "John",
+  "Alice",
+  "Bob Fraud",
+];
+
+const kafka = new Kafka({
+  clientId: "screening-processor",
+  brokers: [process.env.KAFKA_BROKER || "kafka:9092"],
+});
+
+const consumer = kafka.consumer({ groupId: "screening-group" });
+const producer = kafka.producer();
+
+const run = async () => {
+  await consumer.connect();
+  await producer.connect();
+
+  await consumer.subscribe({
+    topic: "kyb.ubo.discovered",
+    fromBeginning: true,
+  });
+
+  console.log("🚀 Screening processor started...");
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      try {
+        const data = JSON.parse(message.value.toString());
+
+        const { caseId, ubos } = data;
+
+        console.log(`📥 Screening case: ${caseId}`);
+        console.log("UBOs received:", ubos);
+
+        const session = getSession();
+
+        // 🔍 Screening logic using WATCHLIST
+        const screened = ubos.map((ubo) => {
+          const hit = WATCHLIST.some((name) =>
+            ubo.person.toLowerCase().includes(name.toLowerCase())
+          );
+
+          return {
+            ...ubo,
+            screeningHit: hit,
+            status: hit ? "HIT" : "CLEAR",
+          };
+        });
+
+        // ✅ Write screening results to Memgraph
+        for (const ubo of screened) {
+          await session.run(
+            `
+            MATCH (p:Person {name: $person}), (c:KybCase {caseId: $caseId})
+            MERGE (check:Check {type: "SCREENING", person: $person})
+            SET check.status = $status,
+                check.details = $details
+            MERGE (p)-[:HAS_CHECK]->(check)
+            MERGE (c)-[:HAS_CHECK]->(check)
+            `,
+            {
+              person: ubo.person,
+              caseId,
+              status: ubo.status,
+              details: ubo.screeningHit
+                ? "Watchlist match"
+                : "No issues",
+            }
+          );
+        }
+
+        // 📤 Emit screening completed event
+        const event = {
+          caseId,
+          ubos: screened,
+          timestamp: new Date().toISOString(),
+        };
+
+        await producer.send({
+          topic: "kyb.screening.completed",
+          messages: [
+            {
+              value: JSON.stringify(event),
+            },
+          ],
+        });
+
+        console.log(`✅ Screening completed for ${caseId}`);
+        await session.close();
+      } catch (err) {
+        console.error("❌ Error in screening processor:", err);
+      }
+    },
+  });
+};
+
+run().catch(console.error);
+
+
+MATCH (c:KybCase)-[:HAS_CHECK]->(check)
+RETURN c.caseId, check.status, check.details;
+
+
+
+const { Kafka } = require("kafkajs");
+const { getSession } = require("./memgraph-client");
+
+const kafka = new Kafka({
+  clientId: "risk-processor",
+  brokers: [process.env.KAFKA_BROKER || "kafka:9092"],
+});
+
+const consumer = kafka.consumer({ groupId: "risk-group" });
+const producer = kafka.producer();
+
+const run = async () => {
+  await consumer.connect();
+  await producer.connect();
+
+  await consumer.subscribe({
+    topic: "kyb.screening.completed",
+    fromBeginning: true,
+  });
+
+  console.log("🚀 Risk processor started...");
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      try {
+        const data = JSON.parse(message.value.toString());
+
+        const { caseId, ubos } = data;
+
+        console.log(`📥 Risk scoring case: ${caseId}`);
+        console.log("Screening input:", ubos);
+
+        const session = getSession();
+
+        let score = 0;
+        let reasons = [];
+
+        // 🔍 Risk calculation logic
+        for (const ubo of ubos) {
+          // 🚨 Screening hit → high risk
+          if (ubo.screeningHit) {
+            score += 50;
+            reasons.push(`Screening hit: ${ubo.person}`);
+          }
+
+          // 📊 High ownership → additional risk
+          if (ubo.effectivePct >= 0.5) {
+            score += 20;
+            reasons.push(`High ownership (>50%): ${ubo.person}`);
+          }
+
+          // ⚠️ Medium ownership
+          if (ubo.effectivePct >= 0.25 && ubo.effectivePct < 0.5) {
+            score += 10;
+            reasons.push(`Moderate ownership (>25%): ${ubo.person}`);
+          }
+        }
+
+        // 🧠 Risk level classification
+        let level = "LOW";
+
+        if (score >= 70) {
+          level = "HIGH";
+        } else if (score >= 40) {
+          level = "MEDIUM";
+        }
+
+        console.log(`🔥 Risk Score: ${score}, Level: ${level}`);
+
+        // ✅ Store in Memgraph
+        await session.run(
+          `
+          MATCH (c:KybCase {caseId: $caseId})
+          MERGE (r:Risk {caseId: $caseId})
+          SET r.score = $score,
+              r.level = $level,
+              r.reasons = $reasons
+          MERGE (c)-[:HAS_RISK]->(r)
+          `,
+          {
+            caseId,
+            score,
+            level,
+            reasons: reasons.join(", "),
+          }
+        );
+
+        // 📤 Emit Kafka event
+        const event = {
+          caseId,
+          score,
+          level,
+          reasons,
+          timestamp: new Date().toISOString(),
+        };
+
+        await producer.send({
+          topic: "kyb.risk.scored",
+          messages: [
+            {
+              value: JSON.stringify(event),
+            },
+          ],
+        });
+
+        console.log(`✅ Risk processed for ${caseId}`);
+
+        await session.close();
+      } catch (err) {
+        console.error("❌ Error in risk processor:", err);
+      }
+    },
+  });
+};
+
+run().catch(console.error);
+
+MATCH (c:KybCase)-[:HAS_RISK]->(r)
+RETURN c.caseId, r.score, r.level, r.reasons;
 
