@@ -1,305 +1,50 @@
-Perfect 👍 — your structure is actually very good and already aligned with Week 5.
-Now we will complete Week 5 (Intern B) on top of your current structure (no breaking changes).
+Got it 👍 — you want this at a system / architecture level (more technical & project-oriented), not just general points. Here’s a refined version you can directly use in your PPT:
 
 
 ---
 
-🚀 WHAT YOU ALREADY HAVE
+Memgraph – System & Architecture Overview
 
-From your screenshot:
+In-memory graph database engine deployed as a core backend service for high-speed processing
 
-✅ Consumers (Week 3 & 4 done)
+Stores data as nodes and relationships, enabling efficient modeling of ownership networks
 
-ubo-processor.js
+Uses Cypher query engine for executing complex graph traversals and pattern matching
 
-screening-processor.js
+Integrated with data ingestion pipelines (e.g., Kafka / APIs) to continuously update graph data
 
-risk-processor.js
+Supports real-time query execution with low latency for dynamic analysis
 
-
-✅ Workbench API structure:
-
-workbench-api/src/
-  ├── db/memgraph.js
-  ├── kafka/producer.js
-  ├── routes/
-  │    ├── cases.js
-  │    ├── decision.js
-  │    ├── ownership.js
-  │    ├── ubo.js
-  ├── index.js
-
-👉 So we just need to complete missing logic + connect everything
-
-
----
-
-✅ STEP 1: FIX YOUR ENTRY (IMPORTANT)
-
-📄 workbench-api/src/index.js
-
-const express = require("express");
-const casesRoutes = require("./routes/cases");
-const decisionRoutes = require("./routes/decision");
-
-const app = express();
-app.use(express.json());
-
-// Routes
-app.use("/queues", casesRoutes);
-app.use("/cases", casesRoutes);
-app.use("/cases", decisionRoutes);
-
-app.listen(3000, () => {
-  console.log("🚀 Workbench API running on port 3000");
-});
-
-
----
-
-✅ STEP 2: IMPLEMENT QUEUE API
-
-📄 routes/cases.js
-
-const express = require("express");
-const router = express.Router();
-const { getSession } = require("../db/memgraph");
-
-// ✅ GET /queues/kyc-officer
-router.get("/kyc-officer", async (req, res) => {
-  const session = getSession();
-
-  const result = await session.run(`
-    MATCH (c:KybCase)
-    OPTIONAL MATCH (c)-[:HAS_CHECK]->(check:Check)
-    RETURN c.caseId AS caseId,
-           collect(DISTINCT check.status) AS checks,
-           c.status AS status
-  `);
-
-  const data = result.records.map(r => ({
-    caseId: r.get("caseId"),
-    status: r.get("status") || "NEW",
-    checks: r.get("checks"),
-  }));
-
-  res.json(data);
-});
-
-
-// ✅ GET /cases/:caseId
-router.get("/:caseId", async (req, res) => {
-  const { caseId } = req.params;
-  const session = getSession();
-
-  const result = await session.run(`
-    MATCH (c:KybCase {caseId: $caseId})
-    OPTIONAL MATCH (c)<-[:IS_UBO_OF]-(p:Person)
-    OPTIONAL MATCH (p)-[:HAS_CHECK]->(check:Check)
-    RETURN c.caseId AS caseId,
-           c.status AS status,
-           collect(DISTINCT p.name) AS ubos,
-           collect(DISTINCT check.status) AS checks
-  `, { caseId });
-
-  const record = result.records[0];
-
-  res.json({
-    caseId: record.get("caseId"),
-    status: record.get("status"),
-    ubos: record.get("ubos"),
-    checks: record.get("checks"),
-  });
-});
-
-module.exports = router;
-
-
----
-
-✅ STEP 3: DECISION API (CRITICAL 🔥)
-
-📄 routes/decision.js
-
-const express = require("express");
-const router = express.Router();
-const { Kafka } = require("kafkajs");
-
-const kafka = new Kafka({
-  clientId: "workbench-api",
-  brokers: [process.env.KAFKA_BROKER || "kafka:29092"],
-});
-
-const producer = kafka.producer();
-
-(async () => {
-  await producer.connect();
-})();
-
-
-// ✅ POST /cases/:caseId/decision
-router.post("/:caseId/decision", async (req, res) => {
-  const { caseId } = req.params;
-  const { decision } = req.body;
-
-  await producer.send({
-    topic: "kyb.decision.made",
-    messages: [
-      {
-        value: JSON.stringify({
-          caseId,
-          decision,
-          timestamp: new Date().toISOString(),
-        }),
-      },
-    ],
-  });
-
-  res.json({ message: "Decision sent successfully" });
-});
-
-module.exports = router;
-
-
----
-
-✅ STEP 4: CREATE DECISION PROCESSOR (MISSING PIECE ⚠️)
-
-👉 Create this inside:
-
-services/consumers/src/decision-processor.js
-
-const { Kafka } = require("kafkajs");
-const { getSession } = require("./memgraph-client");
-
-const kafka = new Kafka({
-  clientId: "decision-processor",
-  brokers: [process.env.KAFKA_BROKER || "kafka:29092"],
-});
-
-const consumer = kafka.consumer({ groupId: "decision-group" });
-
-const run = async () => {
-  await consumer.connect();
-
-  await consumer.subscribe({
-    topic: "kyb.decision.made",
-    fromBeginning: true,
-  });
-
-  console.log("🚀 Decision processor started...");
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      const data = JSON.parse(message.value.toString());
-
-      const { caseId, decision, timestamp } = data;
-      const session = getSession();
-
-      // ✅ Update case status
-      await session.run(`
-        MATCH (c:KybCase {caseId: $caseId})
-        SET c.status = $decision
-      `, { caseId, decision });
-
-      // ✅ Add event timeline
-      await session.run(`
-        MATCH (c:KybCase {caseId: $caseId})
-        CREATE (e:Event {
-          type: "DECISION",
-          decision: $decision,
-          timestamp: $timestamp
-        })
-        MERGE (c)-[:HAS_EVENT]->(e)
-      `, { caseId, decision, timestamp });
-
-      console.log(`✅ Decision processed for ${caseId}`);
-    },
-  });
-};
-
-run().catch(console.error);
-
-
----
-
-✅ STEP 5: CREATE TOPIC (IMPORTANT)
-
-kafka-topics.sh --create --topic kyb.decision.made --bootstrap-server kafka:9092
-
-
----
-
-✅ STEP 6: TEST FLOW
-
-1️⃣ Get queue
-
-curl localhost:3000/queues/kyc-officer
-
-2️⃣ Get case
-
-curl localhost:3000/cases/case-1
-
-3️⃣ Send decision
-
-curl -X POST localhost:3000/cases/case-1/decision \
--H "Content-Type: application/json" \
--d '{"decision":"APPROVED"}'
-
-
----
-
-✅ STEP 7: VERIFY IN MEMGRAPH
-
-MATCH (c:KybCase)
-RETURN c.caseId, c.status;
-
-MATCH (c:KybCase)-[:HAS_EVENT]->(e:Event)
-RETURN c.caseId, e.decision, e.timestamp;
-
-
----
-
-🎯 FINAL FLOW (WHAT YOU SHOULD SEE)
-
-Kafka (decision event)
-        ↓
-decision-processor
-        ↓
-Memgraph updated
-        ↓
-API reflects new status
-
-
----
-
-💬 DEMO LINE
-
-👉 Say this confidently:
-
-> “In Week 5, we added a workbench layer where officers can review cases and take decisions. These decisions are sent as Kafka events and reflected in Memgraph, creating a complete audit trail.”
-
+Can be deployed via Docker containers / microservices architecture for scalability
 
 
 
 ---
 
-🚀 YOU ARE DONE WITH WEEK 5
+🔹 Role of Memgraph in UBO System Architecture
 
-You now have: ✅ Queue API
-✅ Case details API
-✅ Decision API
-✅ Kafka integration
-✅ Memgraph updates
-✅ Event timeline
+Acts as the graph processing layer in the overall system
+
+Receives structured data (entities, ownership links) from upstream services
+
+Performs multi-hop traversal queries to identify ownership chains
+
+Computes and returns the Ultimate Beneficial Owner (UBO)
+
+Provides results to application layer / APIs for screening and risk evaluation
+
+Enables real-time decision workflows (Approve / Escalate / Decline)
+
 
 
 ---
 
-If you want next:
+💡 If you explain in presentation (1 line)
 
-👉 I can give simple UI page (HTML)
-👉 or perfect demo script for Week 5 (step-by-step speaking)
-👉 or docker-compose integration for this API + processor
+“Memgraph acts as the core graph engine in our architecture, enabling real-time traversal of ownership relationships to identify UBO efficiently.”
 
-Just tell 👍
+
+---
+
+If you want next level 🔥
+I can create a proper architecture diagram slide (boxes like Kafka → Memgraph → API → UI) which will impress your manager.
